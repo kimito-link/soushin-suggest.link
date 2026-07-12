@@ -1250,12 +1250,12 @@ footer { padding: 32px 0 48px; }
   var activeStageKey = 'support';
 
   var STAGE_LABELS = {
-    support: ['Chatworkに、厳しめの問い合わせが届いた', '文面をAIに貼って、返信案を相談する', '返信案を貼り付けて、送信するだけ'],
-    error: ['原因不明のエラーが出た。まず画面を撮る', 'スクショをAIに貼って、原因を聞く', 'AIの答えをメモしておく'],
-    review: ['UIのレビュー依頼が来た。画面を撮る', 'スクショをAIに見せて、改善案をもらう', 'そのままレビューの返信にする'],
-    notes: ['会議の文字起こしが手元にある', 'AIに貼って、要約とToDo抽出を頼む', '要約結果をチームに共有する'],
-    code: ['ターミナルにエラーが出た。画面を撮る', 'スクショをAIに貼って、原因を聞く', '対応方法をメモしておく'],
-    cli: ['デプロイ手順のコマンドをなぞってコピー', 'ミドルクリックでGit Bashを呼び出し、貼り付け', '右クリック長押しで、そのまま実行']
+    support: ['Chatworkに、厳しめの問い合わせが届いた', '文面をAIに貼り付けて、送信するだけ'],
+    error: ['原因不明のエラーが出た。まず画面を撮る', 'スクショをAIに貼り付けて、送信するだけ'],
+    review: ['UIのレビュー依頼が来た。画面を撮る', 'スクショをAIに貼り付けて、送信するだけ'],
+    notes: ['会議の文字起こしが手元にある', 'AIに貼り付けて、送信するだけ'],
+    code: ['ターミナルにエラーが出た。画面を撮る', 'スクショをAIに貼り付けて、送信するだけ'],
+    cli: ['デプロイ手順のコマンドをなぞってコピー', 'ミドルクリックでGit Bashを呼び出し、貼り付けて実行するだけ']
   };
 
   var CHAR_STEP_MS = 55;
@@ -1529,37 +1529,6 @@ footer { padding: 32px 0 48px; }
     }, LONGPRESS_DURATION_MS);
 
     at(function () {}, 700);
-
-    // --- second half: the reply/answer in the "to" window gets copied back, and sent ---
-    if (to.selectable) {
-      var toEndIdx = to.chars.length - 1;
-      at(function () {
-        setStory(key, 3);
-        var p = pointOf(to.chars[0]);
-        moveCursorTo(p.x, p.y);
-        say(2, 'この答え、コピーしておこう', p.x, p.y);
-      }, 800);
-
-      at(function () {
-        for (var i = 0; i <= toEndIdx; i++) {
-          (function (idx) {
-            schedule(function () {
-              if (myToken !== playToken) { return; }
-              to.chars[idx].classList.add('is-highlighted');
-              var p = pointOf(to.chars[idx]);
-              moveCursorTo(p.x, p.y);
-              moveSay(p.x, p.y);
-            }, idx * CHAR_STEP_MS);
-          })(i);
-        }
-      }, 900);
-      t += toEndIdx * CHAR_STEP_MS;
-
-      at(function () {
-        var lastP = pointOf(to.chars[toEndIdx]);
-        say(2, 'コピーできた。これで完了！', lastP.x, lastP.y);
-      }, 1200);
-    }
 
     at(function () {
       cursor.classList.remove('is-visible');
