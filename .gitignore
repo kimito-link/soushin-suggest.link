@@ -1,1 +1,5 @@
 assets/*.b64.txt
+node_modules/
+dist/*.exe
+dist/*.zip
+_icon_wip/
