@@ -5,12 +5,14 @@
 //   STRIPE_SECRET_KEY     — same key used to create the payment link
 //   STRIPE_WEBHOOK_SECRET — from the webhook endpoint in the Stripe dashboard
 //   RESEND_API_KEY        — Resend API key with sending access
-//   MAIL_FROM             — verified sender, e.g. "送信サジェスト <noreply@kimito.link>"
+//   MAIL_FROM             — verified sender, e.g. "君斗りんくの送信サジェスト <noreply@best-trust.biz>"
 
 import Stripe from "stripe";
 
 const DOWNLOAD_URL =
   "https://github.com/kimito-link/soushin-suggest.link/releases/download/v1.0.0/soushin-suggest-v1.0.0.zip";
+const SITE_URL = "https://soushin-suggest.link";
+const LOGO_URL = "https://soushin-suggest.link/assets/email/logo.png";
 
 interface Env {
   STRIPE_SECRET_KEY: string;
@@ -85,7 +87,7 @@ async function sendDownloadEmail(env: Env, to: string): Promise<void> {
     body: JSON.stringify({
       from: env.MAIL_FROM,
       to,
-      subject: "【送信サジェスト】ダウンロードのご案内",
+      subject: "【君斗りんくの送信サジェスト】ダウンロードのご案内",
       html: renderEmailHtml(),
     }),
   });
@@ -99,8 +101,11 @@ async function sendDownloadEmail(env: Env, to: string): Promise<void> {
 function renderEmailHtml(): string {
   return `
 <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; color: #1e293b;">
-  <h2>ご購入ありがとうございます</h2>
-  <p>送信サジェストをお買い上げいただき、ありがとうございます。<br>
+  <div style="text-align: center; margin-bottom: 20px;">
+    <img src="${LOGO_URL}" alt="君斗りんくの送信サジェスト" width="56" height="56" style="border-radius: 50%; display: inline-block;">
+  </div>
+  <h2 style="text-align: center;">ご購入ありがとうございます</h2>
+  <p>君斗りんくの送信サジェストをお買い上げいただき、ありがとうございます。<br>
   下のボタンからインストーラーをダウンロードしてください。</p>
   <p style="text-align: center; margin: 32px 0;">
     <a href="${DOWNLOAD_URL}"
@@ -111,6 +116,9 @@ function renderEmailHtml(): string {
   <p style="font-size: 13px; color: #64748b;">
     導入方法: ダウンロードしたzipを展開し、soushin-suggest.exe をダブルクリックするだけです（管理者権限は不要です）。<br>
     詳しくは同梱の README.txt をご覧ください。
+  </p>
+  <p style="font-size: 13px; color: #64748b; margin-top: 20px;">
+    製品ページ: <a href="${SITE_URL}" style="color:#1d4ed8;">${SITE_URL}</a>
   </p>
   <p style="font-size: 13px; color: #64748b; margin-top: 24px;">
     このメールに心当たりがない場合は、破棄していただいて問題ありません。
