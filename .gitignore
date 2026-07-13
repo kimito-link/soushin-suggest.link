@@ -1,4 +1,4 @@
-assets/*.b64.txt
+assets/**/*.b64.txt
 node_modules/
 dist/*.exe
 dist/*.zip
