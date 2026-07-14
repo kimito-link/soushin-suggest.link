@@ -67,8 +67,9 @@ LoadSitesConfig() {
 ; never trigger an unwanted auto-send.
 CurrentSendMode() {
     global SitesConfig, SiteRules
-    exe := WinGetProcessName("A")
-    if !SitesConfig.Has(exe)
+    exe := ""
+    try exe := WinGetProcessName("A")
+    if (exe = "" || !SitesConfig.Has(exe))
         return ""
     title := ""
     try title := WinGetTitle("A")
