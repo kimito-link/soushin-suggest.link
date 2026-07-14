@@ -83,6 +83,54 @@ CopyOnSelectApp() {
     return CurrentSendMode() != ""
 }
 
+; --- スタートアップ登録 (shell:startup にショートカットを作成/削除) ---
+global StartupMenuLabel := ""
+
+StartupShortcutPath() {
+    return A_Startup . "\soushin-suggest.lnk"
+}
+
+IsStartupRegistered() {
+    return FileExist(StartupShortcutPath()) ? true : false
+}
+
+StartupLabelFor(registered) {
+    return registered ? "Windows起動時に自動実行: ON" : "Windows起動時に自動実行: OFF"
+}
+
+EnableStartup() {
+    try FileCreateShortcut(A_ScriptFullPath, StartupShortcutPath(), A_ScriptDir)
+    catch as e {
+        ToolTip("スタートアップ登録に失敗しました: " . e.Message)
+        SetTimer () => ToolTip(), -2000
+        return
+    }
+    ToolTip("次回のWindows起動時から自動で立ち上がります")
+    SetTimer () => ToolTip(), -1800
+}
+
+DisableStartup() {
+    try FileDelete(StartupShortcutPath())
+    ToolTip("自動起動を解除しました")
+    SetTimer () => ToolTip(), -1800
+}
+
+ToggleStartup(*) {
+    if IsStartupRegistered()
+        DisableStartup()
+    else
+        EnableStartup()
+    RefreshStartupMenuLabel()
+}
+
+RefreshStartupMenuLabel() {
+    global StartupMenuLabel
+    newLabel := StartupLabelFor(IsStartupRegistered())
+    if (StartupMenuLabel != "" && StartupMenuLabel != newLabel)
+        A_TrayMenu.Rename(StartupMenuLabel, newLabel)
+    StartupMenuLabel := newLabel
+}
+
 ActivateGitBash() {
     if WinExist("ahk_exe mintty.exe") {
         WinActivate
@@ -166,3 +214,20 @@ XButton1::Send("#{PrintScreen}")
 ; --- 起動時 ---
 LoadSitesConfig()
 TrayTip("送信サジェスト", "常駐を開始しました", "Mute")
+
+; トレイメニューに自動起動のON/OFFを追加
+StartupMenuLabel := StartupLabelFor(IsStartupRegistered())
+A_TrayMenu.Add(StartupMenuLabel, ToggleStartup)
+A_TrayMenu.Add()  ; セパレータ
+
+; 初回起動時（スタートアップ未登録かつ確認未表示）は自動実行を促す
+settingsPath := A_ScriptDir . "\startup-prompted.flag"
+if !IsStartupRegistered() && !FileExist(settingsPath) {
+    FileAppend("1", settingsPath)
+    result := MsgBox("次回からWindows起動時に自動で立ち上げますか？`n（あとからトレイアイコンの右クリックメニューでいつでも切り替えられます）",
+        "送信サジェスト", "YesNo Icon?")
+    if (result = "Yes") {
+        EnableStartup()
+        RefreshStartupMenuLabel()
+    }
+}
