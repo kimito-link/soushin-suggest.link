@@ -10,7 +10,7 @@
 import Stripe from "stripe";
 
 const DOWNLOAD_URL =
-  "https://github.com/kimito-link/soushin-suggest.link/releases/download/v1.1.1/soushin-suggest-v1.1.1.zip";
+  "https://github.com/kimito-link/soushin-suggest.link/releases/download/v1.1.2/soushin-suggest-v1.1.2.zip";
 const SITE_URL = "https://soushin-suggest.link";
 const KIMITO_LINK_COM_URL = "https://kimito-link.com";
 const BRAND_LOGO_URL = "https://soushin-suggest.link/assets/email/kimitolink-logo.png";
