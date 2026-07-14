@@ -1642,7 +1642,12 @@ footer { padding: 32px 0 48px; }
   if (!brandLink) { return; }
   brandLink.addEventListener('click', function (e) {
     e.preventDefault();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    var scroller = document.scrollingElement || document.documentElement;
+    if (scroller.scrollTo) {
+      scroller.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+      scroller.scrollTop = 0;
+    }
   });
 })();
 
