@@ -228,6 +228,7 @@ h1 .strike { text-decoration: line-through; text-decoration-color: var(--muted);
 .demo-step:nth-child(5) .demo-step-icon { background: var(--accent); }
 .demo-step .label { font-size: 13px; font-weight: 800; margin-bottom: 3px; }
 .demo-step .sub { font-size: 11px; color: var(--muted); }
+.demo-step .side-hint { color: var(--accent); text-decoration: underline; white-space: nowrap; }
 .demo-arrow { color: var(--line); font-size: 20px; }
 .demo-caption { text-align: center; font-size: 12px; color: var(--muted); margin-top: 14px; }
 .demo-caption strong { color: var(--fg); }
@@ -1079,6 +1080,11 @@ p.lede { color: var(--muted); font-size: 14px; margin: 10px 0 0; max-width: 58ch
 .mouse-legend-item.side .mouse-legend-dot { background: #7c3aed; }
 .mouse-legend-body .label { font-size: 13px; font-weight: 800; margin-bottom: 3px; overflow-wrap: break-word; }
 .mouse-legend-body p { margin: 0; font-size: 12px; color: var(--muted); overflow-wrap: break-word; }
+.side-check { margin-top: 8px !important; padding: 8px 10px; background: rgba(124,58,237,.08); border-radius: 8px; font-size: 12px; }
+#side-button { scroll-margin-top: 80px; }
+@keyframes sideBtnPulse { 0%,100% { fill-opacity: .85; } 50% { fill-opacity: .45; } }
+.side-btn-pulse { animation: sideBtnPulse 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .side-btn-pulse { animation: none; } }
 
 @media (max-width: 700px) {
   .mouse-map { grid-template-columns: 1fr; }
@@ -1471,7 +1477,7 @@ footer { padding: 32px 0 48px; }
         <div class="demo-step">
           <div class="demo-step-icon">📸</div>
           <div class="label">サイドボタン</div>
-          <div class="sub">画面をまるごと撮る</div>
+          <div class="sub">親指の「戻る」ボタンで画面をまるごと撮る <a href="#side-button" class="side-hint">どのボタン？</a></div>
         </div>
         <div class="demo-arrow">→</div>
         <div class="demo-step">
@@ -1597,7 +1603,7 @@ footer { padding: 32px 0 48px; }
       <div class="compare-row">
         <div class="compare-cell">画面を撮る</div>
         <div class="compare-cell">Win+Shift+Sを覚えて毎回押す</div>
-        <div class="compare-cell">サイドボタン1つ</div>
+        <div class="compare-cell">マウスの「戻る」ボタン1つ</div>
       </div>
       <div class="compare-row">
         <div class="compare-cell">文章をコピー</div>
@@ -2253,7 +2259,7 @@ footer { padding: 32px 0 48px; }
       <div class="scene-mini-card">
         <div class="icon">📸</div>
         <div class="title">エラー相談</div>
-        <div class="desc">Win+Shift+Sでスクショ→タブ切替→貼付→送信、を毎回。サイドボタン1つで撮影から相談まで完結します。</div>
+        <div class="desc">Win+Shift+Sでスクショ→タブ切替→貼付→送信、を毎回。親指の「戻る」ボタン1つで撮影から相談まで完結します。</div>
       </div>
       <div class="scene-mini-card">
         <div class="icon">🎨</div>
@@ -2326,29 +2332,32 @@ footer { padding: 32px 0 48px; }
     <div class="section-head">
       <div class="section-eyebrow">mouse map</div>
       <h2>マウス1つに、4つの役割。</h2>
-      <p class="lede">特殊なマウスは不要です。左右ボタン・ホイールクリック・サイドボタンがある、一般的な3〜5ボタンマウスの機能をフル活用します。</p>
+      <p class="lede">特殊なマウスは不要です。左右ボタン・ホイールクリック・「戻る」のサイドボタンがある、一般的な3〜5ボタンマウスの機能をフル活用します。</p>
     </div>
     <div class="mouse-map">
       <div class="mouse-svg-wrap">
-        <svg viewBox="0 0 200 320" xmlns="http://www.w3.org/2000/svg">
-          <rect x="20" y="20" width="160" height="280" rx="80" fill="#f8fafc" stroke="#e2e8f0" stroke-width="3"/>
-          <line x1="100" y1="20" x2="100" y2="120" stroke="#e2e8f0" stroke-width="3"/>
-          <path d="M20 100 a80 80 0 0 1 80 -80 v100 h-80 z" fill="#047857" fill-opacity="0.18"/>
-          <path d="M180 100 a80 80 0 0 0 -80 -80 v100 h80 z" fill="#1d4ed8" fill-opacity="0.18"/>
-          <rect x="90" y="40" width="20" height="50" rx="8" fill="#f59e0b" fill-opacity="0.35"/>
-          <circle cx="163" cy="240" r="16" fill="#7c3aed" fill-opacity="0.3"/>
+        <svg viewBox="-5 0 215 320" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="マウスの図。左側面の「戻る」ボタンがサイドボタン">
+          <rect x="40" y="20" width="160" height="280" rx="80" fill="#f8fafc" stroke="#e2e8f0" stroke-width="3"/>
+          <line x1="120" y1="20" x2="120" y2="120" stroke="#e2e8f0" stroke-width="3"/>
+          <path d="M40 100 a80 80 0 0 1 80 -80 v100 h-80 z" fill="#047857" fill-opacity="0.18"/>
+          <path d="M200 100 a80 80 0 0 0 -80 -80 v100 h80 z" fill="#1d4ed8" fill-opacity="0.18"/>
+          <rect x="110" y="40" width="20" height="50" rx="8" fill="#f59e0b" fill-opacity="0.35"/>
+          <rect x="26" y="140" width="18" height="34" rx="8" fill="#cbd5e1"/>
+          <rect x="22" y="184" width="24" height="42" rx="10" fill="#7c3aed" fill-opacity="0.85" class="side-btn-pulse"/>
           <text x="55" y="70" text-anchor="middle" font-size="12" font-weight="800" fill="#047857">左</text>
-          <text x="145" y="70" text-anchor="middle" font-size="12" font-weight="800" fill="#1d4ed8">右</text>
-          <text x="100" y="30" text-anchor="middle" font-size="10" font-weight="800" fill="#b45309">中</text>
-          <text x="163" y="244" text-anchor="middle" font-size="10" font-weight="800" fill="#5b21b6">側</text>
+          <text x="165" y="70" text-anchor="middle" font-size="12" font-weight="800" fill="#1d4ed8">右</text>
+          <text x="120" y="30" text-anchor="middle" font-size="10" font-weight="800" fill="#b45309">中</text>
+          <text x="10" y="210" text-anchor="middle" font-size="11" font-weight="800" fill="#5b21b6">戻る</text>
+          <text x="34" y="255" font-size="9" fill="#64748b">← 親指の位置</text>
         </svg>
       </div>
       <div class="mouse-legend">
-        <div class="mouse-legend-item side">
+        <div class="mouse-legend-item side" id="side-button">
           <div class="mouse-legend-dot">側</div>
           <div class="mouse-legend-body">
-            <div class="label">サイドボタン — 全画面スクリーンショット</div>
-            <p>Win+Shift+Sを覚えなくても、マウス側面のボタン一発で画面をキャプチャできます。</p>
+            <div class="label">サイドボタン（親指の「戻る」ボタン）— 全画面スクリーンショット</div>
+            <p>多くのマウスで左わき・親指の当たる場所にある「戻る」ボタンです。押した瞬間、画面全体がそのまま撮影されます。Win+Shift+Sを覚える必要はありません。</p>
+            <p class="side-check">💡 <strong>うちのマウスのどれ？ 3秒チェック</strong>：ブラウザでそのボタンを押して、前のページに「戻った」らそれが対象のボタンです。左きき用や特殊な配置のマウスでも、「戻る」が動くボタンならそのまま使えます。</p>
           </div>
         </div>
         <div class="mouse-legend-item left">
@@ -2478,7 +2487,7 @@ footer { padding: 32px 0 48px; }
       <div class="price-num">¥980 <span class="unit">買い切り</span></div>
       <div class="price-note">Windows 10 / 11・1台のPCで利用可能</div>
       <ul class="price-list">
-        <li>サイドボタンで全画面スクリーンショット</li>
+        <li>サイドボタン（「戻る」ボタン）で全画面スクリーンショット</li>
         <li>なぞってコピー・長押し送信サジェスト</li>
         <li>ミドルクリックでCLI呼び出し</li>
         <li>サイト別 送信ルール設定ファイル同梱</li>
@@ -2656,7 +2665,7 @@ footer { padding: 32px 0 48px; }
     </div>
     <div class="faq-item">
       <p class="faq-q"><span>Q.</span>特定メーカーのマウスが必要ですか？</p>
-      <p class="faq-a">いいえ、メーカーは問いません。左クリック・右クリック・ホイールクリックはほぼ全てのマウスにあるので、大半の機能はどれでも使えます。サイドボタン（戻る/進む）が無いマウスの場合のみ、全画面スクリーンショットの機能だけが使えません。</p>
+      <p class="faq-a">いいえ、メーカーは問いません。左クリック・右クリック・ホイールクリックはほぼ全てのマウスにあるので、大半の機能はどれでも使えます。全画面スクリーンショットに使う「サイドボタン」とは、ブラウザで押すと前のページに戻る<strong>「戻る」ボタン</strong>のことです（本ツールが使うのは「戻る」だけで、「進む」ボタンはこれまで通り使えます）。「戻る」ボタンが無いマウスの場合は、この機能だけが使えませんが、Win+Shift+Sなど従来の方法で代替できます。</p>
     </div>
     <div class="faq-item">
       <p class="faq-q"><span>Q.</span>「AI返信サジェスト」と何が違いますか？</p>
