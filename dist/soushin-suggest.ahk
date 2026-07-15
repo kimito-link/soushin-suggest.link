@@ -1,5 +1,6 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
+CoordMode "Mouse", "Screen"
 ; ============================================================
 ;  送信サジェスト / soushin-suggest.link
 ;  なぞってコピー・右クリック長押しで送信・サイドボタンでスクショ
@@ -8,7 +9,7 @@
 ;
 ;  左クリック（ドラッグ）  -> 選択範囲を自動コピー（対応アプリのみ）
 ;  右クリック長押し(0.35s) -> サイトに合った送信キーを送る（短押しは通常の右クリック）
-;  サイドボタン(戻る)      -> 全画面スクリーンショット
+;  サイドボタン(戻る)      -> 短押し=全画面スクショ / 対応アプリでは長押し=クイックペースト
 ;  ミドルクリック           -> Git Bash を前面へ（無ければ起動）
 ;  Ctrl+Win+C              -> なぞってコピーのON/OFF切り替え
 ;
@@ -19,13 +20,18 @@ global CopyOnSelect := true
 global dragX := 0, dragY := 0, dragT := 0
 global SitesConfig := Map()
 global SiteRules := []
+global ClipHistory := []        ; メモリのみ・非永続（なぞってコピー経由のみ）
+global ClipHistoryMax := 10
+global LongPressSec := 0.35     ; sites.ini [general] longpress= で上書き可
+global LauncherGui := 0
+global LauncherTarget := 0
 
 ; --- load sites.ini (per-app rules + [sites] title-keyword rules) ---
 ; Uses FileRead+manual parsing rather than IniRead: IniRead (GetPrivateProfileString)
 ; is known to mis-decode non-ASCII keys unless the file is UTF-16 LE, and [sites]
 ; needs to hold Japanese keywords (e.g. "ココナラ") reliably as UTF-8.
 LoadSitesConfig() {
-    global SitesConfig, SiteRules
+    global SitesConfig, SiteRules, LongPressSec
     SitesConfig := Map()
     SiteRules := []
     iniPath := A_ScriptDir . "\sites.ini"
@@ -56,6 +62,8 @@ LoadSitesConfig() {
             val := Trim(SubStr(val, 1, p - 1))
         if (section = "sites")
             SiteRules.Push({keyword: key, mode: StrLower(val)})
+        else if (section = "general" && StrLower(key) = "longpress" && IsNumber(val))
+            LongPressSec := val + 0
         else if (section != "" && StrLower(key) = "send")
             SitesConfig[section] := StrLower(val)
     }
@@ -168,9 +176,22 @@ ActivateGitBash() {
     Send("^c")
     Sleep 150
     if (A_Clipboard != "" && A_Clipboard != prev) {
+        PushClipHistory(A_Clipboard)
         ToolTip("コピーしました")
         SetTimer () => ToolTip(), -800
     }
+}
+
+PushClipHistory(text) {
+    global ClipHistory, ClipHistoryMax
+    for i, v in ClipHistory
+        if (v = text) {
+            ClipHistory.RemoveAt(i)   ; 重複は先頭へ昇格
+            break
+        }
+    ClipHistory.InsertAt(1, text)
+    while (ClipHistory.Length > ClipHistoryMax)
+        ClipHistory.Pop()
 }
 
 ^#c:: {
@@ -180,11 +201,12 @@ ActivateGitBash() {
     SetTimer () => ToolTip(), -1200
 }
 
-; --- 右クリック長押し(0.35s) = 送信サジェスト ---
+; --- 右クリック長押し = 送信サジェスト ---
 ; 対応アプリ・Git Bash のみで有効。短押しは通常の右クリックのまま。
 #HotIf CopyOnSelectApp() || WinActive("ahk_exe mintty.exe")
 $RButton:: {
-    if KeyWait("RButton", "T0.35") {
+    global LongPressSec
+    if KeyWait("RButton", "T" . LongPressSec) {
         Send("{Click Right}")
         return
     }
@@ -209,8 +231,78 @@ MButton::ActivateGitBash()
 #HotIf
 ^#t::ActivateGitBash()
 
-; --- サイドボタン(戻る) = 全画面スクリーンショット ---
-XButton1::Send("#{PrintScreen}")
+; --- サイドボタン(戻る): 短押し=スクショ / 対応アプリでは長押し=クイックペースト ---
+XButton1:: {
+    global LongPressSec
+    if !(CopyOnSelectApp() || WinActive("ahk_exe mintty.exe")) {
+        Send("#{PrintScreen}")
+        return
+    }
+    if KeyWait("XButton1", "T" . LongPressSec) {
+        Send("#{PrintScreen}")
+        return
+    }
+    KeyWait("XButton1")
+    ShowLauncher()
+}
+
+ShowLauncher() {
+    global ClipHistory, LauncherGui, LauncherTarget
+    if (ClipHistory.Length = 0) {
+        ToolTip("履歴がありません（なぞってコピーすると貯まります）")
+        SetTimer () => ToolTip(), -1800
+        return
+    }
+    LauncherTarget := WinExist("A")           ; ペースト先を先に記憶
+    CloseLauncher()
+    LauncherGui := Gui("-Caption +AlwaysOnTop +ToolWindow +Border")
+    LauncherGui.SetFont("s10", "Meiryo UI")
+    items := []
+    for v in ClipHistory {
+        s := RegExReplace(v, "\s+", " ")
+        items.Push(StrLen(s) > 40 ? SubStr(s, 1, 40) . "…" : s)
+    }
+    lb := LauncherGui.Add("ListBox", "w340 r" . Min(items.Length, 10), items)
+    lb.OnEvent("Change", PasteFromLauncher)
+    LauncherGui.OnEvent("Escape", (*) => CloseLauncher())
+    MouseGetPos &mx, &my
+    LauncherGui.Show("x" . mx . " y" . my)
+    WinActivate("ahk_id " . LauncherGui.Hwnd)
+    SetTimer(CheckLauncherFocus, 150)         ; リスト外クリックで閉じる
+}
+
+PasteFromLauncher(lb, *) {
+    global ClipHistory, LauncherTarget
+    idx := lb.Value
+    if (idx < 1)
+        return
+    text := ClipHistory[idx]
+    CloseLauncher()
+    A_Clipboard := text
+    if (LauncherTarget && WinExist("ahk_id " . LauncherTarget))
+        WinActivate("ahk_id " . LauncherTarget)
+    Sleep 150
+    Send("^v")
+}
+
+CheckLauncherFocus() {
+    global LauncherGui
+    if !IsObject(LauncherGui) {
+        SetTimer(CheckLauncherFocus, 0)
+        return
+    }
+    if !WinActive("ahk_id " . LauncherGui.Hwnd)
+        CloseLauncher()
+}
+
+CloseLauncher() {
+    global LauncherGui
+    SetTimer(CheckLauncherFocus, 0)
+    if IsObject(LauncherGui) {
+        try LauncherGui.Destroy()
+        LauncherGui := 0
+    }
+}
 
 ; --- 起動時 ---
 LoadSitesConfig()
