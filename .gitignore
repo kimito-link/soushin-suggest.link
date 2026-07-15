@@ -7,3 +7,6 @@ assets/yukkuri-charactore-english/
 assets/yukkuri-resized/
 HANDOFF-next-session.md
 dist/clip-archive/
+dist/snippets.csv
+dist/startup-prompted.flag
+*.lnk
