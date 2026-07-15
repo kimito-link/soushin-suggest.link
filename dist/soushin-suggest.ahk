@@ -18,7 +18,7 @@ CoordMode "Mouse", "Screen"
 global CopyOnSelect := true, dragX := 0, dragY := 0, dragT := 0
 global SitesConfig := Map()
 global SiteRules := []
-global ClipHistory := [], ClipHistoryMax := 30   ; {text,time}の配列・メモリのみ・非永続（ユーザー操作由来のグローバル監視）
+global ClipHistory := [], ClipHistoryMax := 30   ; {text,time}の配列・メモリのみ・非永続 — 永続化禁止(唯一の安全特性。エクスポートも不可。経緯は_docs参照)
 global LongPressSec := 0.35     ; sites.ini [general] longpress= で上書き可
 global LauncherGui := 0, LauncherTarget := 0, LauncherTab := 0, Snippets := [], LauncherDragBar := 0, LauncherPos := "", LauncherPinned := false, LauncherLbH := 0, LauncherLbS := 0, LauncherHoverLast := ""
 global ClipWatchOn := true                ; トレイから一時停止可
@@ -248,9 +248,10 @@ XButton1:: {
 ; --- snippets.ini: ラベル=本文（\n で改行、run:パス で起動）---
 ; sites.iniパーサと違い、インラインコメント(;)は剥がさない — 本文に ; が入りうるため。
 ; IniRead は使わない（非ASCIIキー誤読の既知の罠。ラベルは日本語になる）。
-LoadSnippets() {
+LoadSnippets(path := "") {
     items := []
-    path := A_ScriptDir . "\snippets.ini"
+    if (path = "")
+        path := A_ScriptDir . "\snippets.ini"
     if !FileExist(path)
         return items
     for line in StrSplit(FileRead(path, "UTF-8"), "`n", "`r") {
@@ -268,6 +269,47 @@ LoadSnippets() {
     return items
 }
 
+EditSnippetsFile(*) {
+    path := A_ScriptDir . "\snippets.ini"
+    if !FileExist(path)
+        try FileAppend("; ラベル=本文（\n で改行、run:パス で起動）`n", path, "UTF-8")
+    Run('notepad.exe "' . path . '"')
+}
+
+; 別ファイルから定型文を追記マージ。既存ラベルと重複するものは飛ばす。
+; 書き込みはPromoteHistoryAtと同じ流儀（IniWrite不使用・UTF-8明示のFileAppend）
+ImportSnippets(*) {
+    f := FileSelect(1, , "取り込む定型文ファイルを選択", "定型文ファイル (*.ini; *.txt)")
+    if (f = "")
+        return
+    try if (FileGetSize(f) > 1024 * 1024) {
+        Flash("ファイルが大きすぎます（1MB超）", 1800)
+        return
+    }
+    incoming := LoadSnippets(f)
+    if (incoming.Length = 0) {
+        Flash("取り込める定型文が見つかりませんでした（ラベル=本文 の形式）", 2000)
+        return
+    }
+    have := Map()
+    for s in LoadSnippets()
+        have[s.label] := 1
+    path := A_ScriptDir . "\snippets.ini"
+    added := 0
+    try {
+        nl := (FileExist(path) && !RegExMatch(FileRead(path, "UTF-8"), "\R$")) ? "`n" : ""
+        for s in incoming {
+            if have.Has(s.label)
+                continue
+            FileAppend(nl . s.label . "=" . StrReplace(s.value, "`n", "\n") . "`n", path, "UTF-8")
+            nl := "", added++
+        }
+        Flash(added . " 件を取り込みました（重複 " . (incoming.Length - added) . " 件はスキップ）", 2000)
+    } catch as e {
+        Flash("インポートに失敗しました: " . e.Message, 2000)
+    }
+}
+
 ShowLauncher() {
     global ClipHistory, LauncherGui, LauncherTarget, Snippets, LauncherTab, LauncherDragBar, LauncherPos, LauncherPinned, LauncherLbH, LauncherLbS, LauncherHoverLast
     Snippets := LoadSnippets()                ; 開くたびに読む: iniを編集→次の長押しで即反映
@@ -280,7 +322,7 @@ ShowLauncher() {
     LauncherGui := Gui("-Caption +AlwaysOnTop +ToolWindow +Border")
     LauncherGui.SetFont("s12", "Meiryo UI")
     LauncherDragBar := LauncherGui.Add("Text", "x0 y0 w400 h16 BackgroundD4DCE8 +0x100")  ; SS_NOTIFY相当をv2既定に加え、押下を明示検知
-    LauncherGui.Add("Text", "x400 y2 w60 h12 cGray", "v1.3.0").SetFont("s8")   ; 掴みしろの右隣にバージョン表示
+    LauncherGui.Add("Text", "x400 y2 w60 h12 cGray", "v1.4.0").SetFont("s8")   ; 掴みしろの右隣にバージョン表示
     LauncherGui.SetFont("s12")
     LauncherTab := LauncherGui.Add("Tab3", "x0 y16 w460 -Wrap",
         ["履歴 " . ClipHistory.Length, "定型文 " . Snippets.Length])
@@ -480,7 +522,7 @@ LauncherWatchHover() {
     }
 }
 
-; 右クリック: 掴みしろ=固定解除 / 履歴項目=メニュー（昇格・削除）
+; 右クリック: 掴みしろ=固定解除 / 履歴項目=メニュー（開く・昇格・削除）
 LauncherContextMenu(g, ctrl, item, isRC, x, y) {
     global LauncherDragBar, LauncherLbH, LauncherPos, LauncherPinned, ClipHistory, LauncherGui
     if (ctrl = LauncherDragBar) {
@@ -492,6 +534,8 @@ LauncherContextMenu(g, ctrl, item, isRC, x, y) {
             return
         SetTimer(CheckLauncherFocus, 0)       ; メニュー表示中の誤クローズ防止(必須)
         m := Menu()
+        if (p := RunnablePathFrom(ClipHistory[idx].text))
+            m.Add(InStr(FileExist(p), "D") ? "このフォルダを開く" : "このファイルを開く", (*) => OpenHistoryPath(p))
         m.Add("定型文に登録", (*) => PromoteHistoryAt(idx))
         m.Add("この履歴を削除", (*) => DeleteHistoryAt(idx))
         m.Add("履歴を全削除", (*) => DeleteHistoryAll())
@@ -499,6 +543,32 @@ LauncherContextMenu(g, ctrl, item, isRC, x, y) {
         if IsObject(LauncherGui)
             SetTimer(CheckLauncherFocus, 150)
     }
+}
+
+; 履歴テキストが「実在するローカルのドライブレター絶対パス」のときだけ正規化して返す。
+; UNC(\\server)・相対パス・複数行・存在しないパスはすべて空を返す(fail-closed)。
+RunnablePathFrom(text) {
+    p := Trim(text, " `t`r`n`"'")
+    if InStr(p, "`n") || StrLen(p) > 500
+        return ""
+    if !RegExMatch(p, "i)^[a-z]:\\")
+        return ""
+    return FileExist(p) ? p : ""
+}
+
+OpenHistoryPath(p) {
+    CloseLauncher()
+    if InStr(FileExist(p), "D") {
+        try Run('explorer.exe "' . p . '"')
+        return
+    }
+    if RegExMatch(p, "i)\.(exe|bat|cmd|com|ps1|vbs|js|wsf|msi|scr|lnk)$") {
+        if (MsgBox("これはプログラムです。実行しますか？`n`n" . p, "履歴から実行", "YesNo Icon! Default2") != "Yes")
+            return
+    }
+    try Run('"' . p . '"')
+    catch
+        Flash("開けませんでした: " . p, 1800)
 }
 
 DeleteHistoryAt(idx) {
@@ -586,8 +656,11 @@ StartupMenuLabel := StartupLabelFor(IsStartupRegistered())
 A_TrayMenu.Add(StartupMenuLabel, ToggleStartup)
 A_TrayMenu.Add("クリップボード監視を一時停止", ToggleClipWatch)
 A_TrayMenu.Add("クリップボード履歴を全削除", DeleteHistoryAll)
+A_TrayMenu.Add("定型文ファイルを編集 (snippets.ini)", EditSnippetsFile)
+A_TrayMenu.Add("定型文をインポート（別ファイルから追記）", ImportSnippets)
+A_TrayMenu.Add("設定フォルダを開く", (*) => Run('explorer.exe "' . A_ScriptDir . '"'))
 A_TrayMenu.Add()  ; セパレータ
-A_TrayMenu.Add("v1.3.0", (*) => 0), A_TrayMenu.Disable("v1.3.0")
+A_TrayMenu.Add("v1.4.0", (*) => 0), A_TrayMenu.Disable("v1.4.0")
 A_TrayMenu.Add()  ; セパレータ
 
 ; 初回起動時（スタートアップ未登録かつ確認未表示）は自動実行を促す
