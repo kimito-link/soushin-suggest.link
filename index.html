@@ -1065,7 +1065,11 @@ p.lede { color: var(--muted); font-size: 14px; margin: 10px 0 0; max-width: 58ch
 .step-note strong { color: var(--accent); }
 
 /* clipboard & snippets — 新規セクション「コピーしたものは、なくさない。」 */
-.clip-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 24px; }
+.clip-launcher { background: var(--panel-soft); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; margin-top: 24px; }
+.clip-launcher h3 { font-size: 14.5px; margin: 0 0 8px; overflow-wrap: break-word; }
+.clip-launcher > p { font-size: 13px; color: var(--muted); margin: 0; overflow-wrap: break-word; }
+.clip-launcher-list { margin: 10px 0 0; padding-left: 0; list-style: none; font-size: 12.5px; color: var(--muted); display: grid; gap: 6px; }
+.clip-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px; }
 .clip-uses { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 28px; }
 .clip-use-card { background: var(--panel-soft); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 16px; font-size: 12.5px; color: var(--muted); }
 .clip-use-card strong { display: block; color: var(--fg); font-size: 13px; margin-bottom: 6px; }
@@ -1123,6 +1127,7 @@ p.lede { color: var(--muted); font-size: 14px; margin: 10px 0 0; max-width: 58ch
 .mouse-legend-body p { margin: 0; font-size: 12px; color: var(--muted); overflow-wrap: break-word; }
 .side-check { margin-top: 8px !important; padding: 8px 10px; background: rgba(124,58,237,.08); border-radius: 8px; font-size: 12px; }
 #side-button { scroll-margin-top: 100px; }
+#clipboard { scroll-margin-top: 100px; }
 @keyframes sideBtnPulse { 0%,100% { fill-opacity: .85; } 50% { fill-opacity: .45; } }
 .side-btn-pulse { animation: sideBtnPulse 1.6s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .side-btn-pulse { animation: none; } }
@@ -2417,8 +2422,8 @@ footer { padding: 32px 0 48px; }
         <div class="mouse-legend-item side" id="side-button">
           <div class="mouse-legend-dot">側</div>
           <div class="mouse-legend-body">
-            <div class="label">サイドボタン（親指の「戻る」ボタン）— 全画面スクリーンショット</div>
-            <p>多くのマウスで左わき・親指の当たる場所にある「戻る」ボタンです。押した瞬間、画面全体がそのまま撮影されます。Win+Shift+Sを覚える必要はありません。</p>
+            <div class="label">サイドボタン（親指の「戻る」ボタン）— 短押しでスクショ、長押しで貼り付けランチャー</div>
+            <p>多くのマウスで左わき・親指の当たる場所にある「戻る」ボタンです。<strong>短押し</strong>で画面全体をそのまま撮影（Win+Shift+Sを覚える必要はありません）。<strong>長押し</strong>で、コピーした履歴と定型文の一覧がその場に開きます。詳しくは<a href="#clipboard">下のセクション</a>で。</p>
             <p class="side-check">💡 <strong>うちのマウスのどれ？ 3秒チェック</strong>：ブラウザでそのボタンを押して、前のページに「戻った」らそれが対象のボタンです。左きき用や特殊な配置のマウスでも、「戻る」が動くボタンならそのまま使えます。</p>
           </div>
         </div>
@@ -2426,7 +2431,7 @@ footer { padding: 32px 0 48px; }
           <div class="mouse-legend-dot">左</div>
           <div class="mouse-legend-body">
             <div class="label">左クリック（ドラッグ）— なぞってコピー</div>
-            <p>文章をドラッグして離すだけで自動的にコピーされます。</p>
+            <p>文章をドラッグして離すだけで自動的にコピーされます。動いてほしくない作業のときは、Ctrl + Win + C でいつでもON/OFFできます。</p>
           </div>
         </div>
         <div class="mouse-legend-item right">
@@ -2490,6 +2495,16 @@ footer { padding: 32px 0 48px; }
       <div class="section-eyebrow">clipboard & snippets</div>
       <h2>コピーしたものは、なくさない。</h2>
       <p class="lede">なぞってコピーは速い。でも速いぶん、次のコピーで前のものが消えるのは惜しい。送信サジェストは、コピーしたテキストも撮ったスクショも、履歴として手元に置いておけます。</p>
+    </div>
+    <div class="clip-launcher">
+      <h3>呼び出しは、いつものサイドボタン。長押しするだけ。</h3>
+      <p>スクショを撮るあのサイドボタンを<strong>長押し</strong>すると、コピーした履歴と定型文の一覧「クイックペーストランチャー」がその場に開きます。<strong>クリックか、数字キー（1〜9、0で10番目）</strong>で選べば、その場で貼り付け。よく使う文面は、履歴を<strong>右クリック→「定型文に登録」</strong>で昇格させておけば、次からは番号ひとつで呼び出せます。</p>
+      <ul class="clip-launcher-list">
+        <li>📂 履歴がファイルやフォルダのパスなら、貼り付けずに<strong>「開く」</strong>こともできます。「さっきコピーしたあのフォルダ」に、エクスプローラーを辿らず直行。</li>
+        <li>👀 項目にマウスを乗せれば全文プレビュー。長い文面も、貼る前に中身を確かめられます。</li>
+        <li>📌 ランチャーはドラッグで好きな場所に動かせて、位置の固定もできます。</li>
+      </ul>
+      <div class="flow-alt"><span class="emoji">⌨️</span>キーボード派は Ctrl + Win + V でも同じランチャーを開けます。マウスから手を離さないための機能なので、覚えなくても困りません。</div>
     </div>
     <div class="clip-row">
       <div class="step-card">
