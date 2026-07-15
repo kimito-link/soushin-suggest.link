@@ -12,16 +12,23 @@ CoordMode "Mouse", "Screen"
 ;  ミドルクリック           -> Git Bash を前面へ（無ければ起動）
 ;  Ctrl+Win+C              -> なぞってコピーのON/OFF切り替え
 ;  Ctrl+Win+V              -> クイックペーストを開く（マウスなしでも呼び出せる）
-;
 ;  対応アプリ・送信ルールは sites.ini、定型文は snippets.ini で編集できます（同梱）。
 ;  トレイのアイコンを右クリック -> Suspend Hotkeys / Exit
 
 global CopyOnSelect := true, dragX := 0, dragY := 0, dragT := 0
 global SitesConfig := Map()
 global SiteRules := []
-global ClipHistory := [], ClipHistoryMax := 10   ; {text,time}の配列・メモリのみ・非永続（なぞってコピー経由のみ）
+global ClipHistory := [], ClipHistoryMax := 30   ; {text,time}の配列・メモリのみ・非永続（ユーザー操作由来のグローバル監視）
 global LongPressSec := 0.35     ; sites.ini [general] longpress= で上書き可
 global LauncherGui := 0, LauncherTarget := 0, LauncherTab := 0, Snippets := [], LauncherDragBar := 0, LauncherPos := "", LauncherPinned := false, LauncherLbH := 0, LauncherLbS := 0, LauncherHoverLast := ""
+global ClipWatchOn := true                ; トレイから一時停止可
+global LastUserCopyTick := 0              ; ^c/^x/^Ins・なぞってコピー送信の時刻
+global LastLButtonUpTick := 0             ; 右クリックメニュー「コピー」等のクリック由来を救う
+global SelfClipTick := 0                  ; 自分がA_Clipboardへ書いた時刻(監視除外)
+global LastCaptureText := "", LastCaptureTick := 0   ; 自動クリア検知用
+global ClipUserWindowMs := 1000           ; ユーザー操作限定フィルタの窓(iniに出さない・固定)
+global ClipAutoClearSec := 45, ClipMaxLen := 100000
+global ClipExcludeExes := Map("keepass.exe",1, "keepassxc.exe",1, "1password.exe",1, "bitwarden.exe",1)
 
 Flash(msg, ms := 1500) {
     ToolTip(msg)
@@ -104,8 +111,7 @@ EnableStartup() {
 }
 
 DisableStartup() {
-    try FileDelete(StartupShortcutPath())
-    Flash("自動起動を解除しました", 1800)
+    try FileDelete(StartupShortcutPath()), Flash("自動起動を解除しました", 1800)
 }
 
 ToggleStartup(*) {
@@ -137,7 +143,15 @@ ActivateGitBash() {
     Flash("Git Bash が見つかりませんでした", 1500)
 }
 
-; --- なぞってコピー: ドラッグ解放でCtrl+Cを送る ---
+; ユーザー発のコピー操作を時刻だけ記録する(~でキー自体は素通し)
+~^c::
+~^x::
+~^Ins:: {
+    global LastUserCopyTick
+    LastUserCopyTick := A_TickCount
+}
+
+; --- なぞってコピー: ドラッグ解放でCtrl+Cを送る（履歴追加はClipChangedに一本化） ---
 ~LButton:: {
     global dragX, dragY, dragT
     MouseGetPos &dragX, &dragY
@@ -145,7 +159,8 @@ ActivateGitBash() {
 }
 
 ~LButton up:: {
-    global CopyOnSelect, dragX, dragY, dragT
+    global CopyOnSelect, dragX, dragY, dragT, LastLButtonUpTick, LastUserCopyTick
+    LastLButtonUpTick := A_TickCount          ; コンテキストメニュー由来のコピーを救う
     if !CopyOnSelect || !CopyOnSelectApp()
         return
     MouseGetPos &x, &y
@@ -153,12 +168,11 @@ ActivateGitBash() {
     if (Abs(x - dragX) < 30 && Abs(y - dragY) < 30) || dt < 150 || dt > 15000
         return
     prev := A_Clipboard
+    LastUserCopyTick := A_TickCount           ; フィルタを確実に通す
     Send("^c")
     Sleep 150
-    if (A_Clipboard != "" && A_Clipboard != prev) {
-        PushClipHistory(A_Clipboard)
-        Flash("コピーしました", 800)
-    }
+    if (A_Clipboard != "" && A_Clipboard != prev)
+        Flash("コピーしました", 800)          ; 履歴追加はClipChangedに一本化
 }
 
 PushClipHistory(text) {
@@ -168,7 +182,7 @@ PushClipHistory(text) {
             ClipHistory.RemoveAt(i)   ; 重複は先頭へ昇格（時刻も更新される）
             break
         }
-    ClipHistory.InsertAt(1, {text: text, time: FormatTime(, "HH:mm")})
+    ClipHistory.InsertAt(1, {text: text, time: FormatTime(, "yyyy/MM/dd HH:mm:ss")})
     while (ClipHistory.Length > ClipHistoryMax)
         ClipHistory.Pop()
 }
@@ -257,8 +271,10 @@ ShowLauncher() {
     CloseLauncher()
     LauncherGui := Gui("-Caption +AlwaysOnTop +ToolWindow +Border")
     LauncherGui.SetFont("s12", "Meiryo UI")
-    LauncherDragBar := LauncherGui.Add("Text", "w460 h12 BackgroundD4DCE8 +0x100")  ; SS_NOTIFY相当をv2既定に加え、押下を明示検知
-    LauncherTab := LauncherGui.Add("Tab3", "w460 -Wrap",
+    LauncherDragBar := LauncherGui.Add("Text", "x0 y0 w400 h16 BackgroundD4DCE8 +0x100")  ; SS_NOTIFY相当をv2既定に加え、押下を明示検知
+    LauncherGui.Add("Text", "x400 y2 w60 h12 cGray", "v1.2.0").SetFont("s8")   ; 掴みしろの右隣にバージョン表示
+    LauncherGui.SetFont("s12")
+    LauncherTab := LauncherGui.Add("Tab3", "x0 y16 w460 -Wrap",
         ["履歴 " . ClipHistory.Length, "定型文 " . Snippets.Length])
     rows := Min(Max(ClipHistory.Length, Snippets.Length, 3), 10)
     LauncherTab.UseTab(1)
@@ -314,12 +330,82 @@ UseSnippetAt(idx) {
 }
 
 PasteText(text) {
-    global LauncherTarget
+    global LauncherTarget, SelfClipTick
+    SelfClipTick := A_TickCount
     A_Clipboard := text
     if (LauncherTarget && WinExist("ahk_id " . LauncherTarget))
         WinActivate("ahk_id " . LauncherTarget)
     Sleep 150
     Send("^v")
+}
+
+; --- グローバルクリップボード監視（ユーザー操作限定フィルタ付き） ---
+; RDP/VM同期で載らないのは仕様（ローカルのキー・マウス操作を伴わないためフィルタで弾く）
+ClipChanged(type) {
+    global ClipWatchOn, SelfClipTick
+    if (A_TickCount - SelfClipTick < 500)     ; PasteText等の自己書き込み
+        return
+    if (type = 0) {                           ; クリア → 自動クリア検知
+        MaybeDropAutoCleared()
+        return
+    }
+    if (type != 1 || !ClipWatchOn)            ; 非テキスト・一時停止中
+        return
+    if ClipHasIgnoreFormat()                  ; パスワードマネージャの標準除外フォーマット
+        return
+    SetTimer(CaptureClip, -120)               ; 多重発火デバウンス(最後の発火から120ms後に1回)
+}
+
+CaptureClip() {
+    global LastUserCopyTick, LastLButtonUpTick, ClipUserWindowMs, ClipMaxLen
+    global LastCaptureText, LastCaptureTick
+    now := A_TickCount
+    ; ★核心の安全策: 直近1秒以内のユーザー操作がなければ捨てる(fail-closed)
+    if (now - LastUserCopyTick > ClipUserWindowMs) && (now - LastLButtonUpTick > ClipUserWindowMs)
+        return
+    if ClipSourceExcluded()
+        return
+    text := ""
+    try text := A_Clipboard                   ; 遅延レンダリング元が死んでいると失敗しうる
+    if (text = "" || StrLen(text) > ClipMaxLen)
+        return
+    LastCaptureText := text, LastCaptureTick := now
+    PushClipHistory(text)
+}
+
+; クリップボードを開かずに判定できるためコールバック内でも安全
+ClipHasIgnoreFormat() {
+    static fmts := [DllCall("RegisterClipboardFormat", "Str", "Clipboard Viewer Ignore", "UInt"),
+                    DllCall("RegisterClipboardFormat", "Str", "ExcludeClipboardContentFromMonitorProcessing", "UInt")]
+    for f in fmts
+        if (f && DllCall("IsClipboardFormatAvailable", "UInt", f))
+            return true
+    return false
+}
+
+ClipSourceExcluded() {
+    global ClipExcludeExes
+    exe := ""
+    if (hwnd := DllCall("GetClipboardOwner", "Ptr")) {
+        DllCall("GetWindowThreadProcessId", "Ptr", hwnd, "UInt*", &pid := 0)
+        try exe := StrLower(ProcessGetName(pid))
+    }
+    if (exe = "")
+        try exe := StrLower(WinGetProcessName("A"))
+    return exe != "" && ClipExcludeExes.Has(exe)
+}
+
+MaybeDropAutoCleared() {
+    global ClipHistory, LastCaptureText, LastCaptureTick, ClipAutoClearSec
+    if (LastCaptureText = "" || A_TickCount - LastCaptureTick > ClipAutoClearSec * 1000)
+        return
+    for i, v in ClipHistory
+        if (v.text = LastCaptureText) {
+            ClipHistory.RemoveAt(i)
+            Flash("自動クリアを検知したため履歴からも削除しました", 1500)
+            break
+        }
+    LastCaptureText := ""
 }
 
 CheckLauncherFocus() {
@@ -433,6 +519,7 @@ LauncherPickKey(hk, *) {
 
 ; --- 起動時 ---
 LoadSitesConfig()
+OnClipboardChange(ClipChanged)
 ; 数字キー1-9,0=10: ランチャーがアクティブな間だけ有効（HotIfスコープ限定・解除処理は不要）
 HotIf (*) => IsObject(LauncherGui) && WinActive("ahk_id " . LauncherGui.Hwnd)
 Loop 10
@@ -440,9 +527,11 @@ Loop 10
 HotIf
 TrayTip("送信サジェスト", "常駐を開始しました", "Mute")
 
-; トレイメニューに自動起動のON/OFFを追加
+; トレイメニューに自動起動のON/OFFとバージョン表示を追加
 StartupMenuLabel := StartupLabelFor(IsStartupRegistered())
 A_TrayMenu.Add(StartupMenuLabel, ToggleStartup)
+A_TrayMenu.Add()  ; セパレータ
+A_TrayMenu.Add("v1.2.0", (*) => 0), A_TrayMenu.Disable("v1.2.0")
 A_TrayMenu.Add()  ; セパレータ
 
 ; 初回起動時（スタートアップ未登録かつ確認未表示）は自動実行を促す
