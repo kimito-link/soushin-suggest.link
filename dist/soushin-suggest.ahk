@@ -18,9 +18,9 @@ CoordMode "Mouse", "Screen"
 global CopyOnSelect := true, dragX := 0, dragY := 0, dragT := 0
 global SitesConfig := Map()
 global SiteRules := []
-global ClipHistory := [], ClipHistoryMax := 10   ; メモリのみ・非永続（なぞってコピー経由のみ）
+global ClipHistory := [], ClipHistoryMax := 10   ; {text,time}の配列・メモリのみ・非永続（なぞってコピー経由のみ）
 global LongPressSec := 0.35     ; sites.ini [general] longpress= で上書き可
-global LauncherGui := 0, LauncherTarget := 0, LauncherTab := 0, Snippets := [], LauncherDragBar := 0, LauncherPos := "", LauncherPinned := false
+global LauncherGui := 0, LauncherTarget := 0, LauncherTab := 0, Snippets := [], LauncherDragBar := 0, LauncherPos := "", LauncherPinned := false, LauncherLbH := 0, LauncherLbS := 0, LauncherHoverLast := ""
 
 Flash(msg, ms := 1500) {
     ToolTip(msg)
@@ -97,12 +97,9 @@ IsStartupRegistered() => FileExist(StartupShortcutPath()) ? true : false
 StartupLabelFor(registered) => registered ? "Windows起動時に自動実行: ON" : "Windows起動時に自動実行: OFF"
 
 EnableStartup() {
-    try FileCreateShortcut(A_ScriptFullPath, StartupShortcutPath(), A_ScriptDir)
-    catch as e {
+    try FileCreateShortcut(A_ScriptFullPath, StartupShortcutPath(), A_ScriptDir), Flash("次回のWindows起動時から自動で立ち上がります", 1800)
+    catch as e
         Flash("スタートアップ登録に失敗しました: " . e.Message, 2000)
-        return
-    }
-    Flash("次回のWindows起動時から自動で立ち上がります", 1800)
 }
 
 DisableStartup() {
@@ -111,10 +108,7 @@ DisableStartup() {
 }
 
 ToggleStartup(*) {
-    if IsStartupRegistered()
-        DisableStartup()
-    else
-        EnableStartup()
+    IsStartupRegistered() ? DisableStartup() : EnableStartup()
     RefreshStartupMenuLabel()
 }
 
@@ -169,11 +163,11 @@ ActivateGitBash() {
 PushClipHistory(text) {
     global ClipHistory, ClipHistoryMax
     for i, v in ClipHistory
-        if (v = text) {
-            ClipHistory.RemoveAt(i)   ; 重複は先頭へ昇格
+        if (v.text = text) {
+            ClipHistory.RemoveAt(i)   ; 重複は先頭へ昇格（時刻も更新される）
             break
         }
-    ClipHistory.InsertAt(1, text)
+    ClipHistory.InsertAt(1, {text: text, time: FormatTime(, "HH:mm")})
     while (ClipHistory.Length > ClipHistoryMax)
         ClipHistory.Pop()
 }
@@ -251,7 +245,7 @@ LoadSnippets() {
 }
 
 ShowLauncher() {
-    global ClipHistory, LauncherGui, LauncherTarget, Snippets, LauncherTab, LauncherDragBar, LauncherPos, LauncherPinned
+    global ClipHistory, LauncherGui, LauncherTarget, Snippets, LauncherTab, LauncherDragBar, LauncherPos, LauncherPinned, LauncherLbH, LauncherLbS, LauncherHoverLast
     Snippets := LoadSnippets()                ; 開くたびに読む: iniを編集→次の長押しで即反映
     if (ClipHistory.Length = 0 && Snippets.Length = 0) {
         Flash("履歴がありません（なぞってコピーすると貯まります）", 1800)
@@ -268,34 +262,35 @@ ShowLauncher() {
     LauncherTab.UseTab(1)
     histItems := []
     for v in ClipHistory {
-        s := RegExReplace(v, "\s+", " ")
+        s := RegExReplace(v.text, "\s+", " ")
         histItems.Push(Mod(A_Index, 10) . " " . (StrLen(s) > 58 ? SubStr(s, 1, 58) . "…" : s))
     }
-    lbH := LauncherGui.Add("ListBox", "w440 r" . rows . " BackgroundF0F6FF", histItems)
-    lbH.OnEvent("Change", (lb, *) => PasteHistoryAt(lb.Value))
+    LauncherLbH := LauncherGui.Add("ListBox", "w440 r" . rows . " BackgroundF0F6FF", histItems)
+    LauncherLbH.OnEvent("Change", (lb, *) => PasteHistoryAt(lb.Value))
     LauncherTab.UseTab(2)
     snipItems := []
     for i, s in Snippets
         snipItems.Push((i <= 10 ? Mod(i, 10) . " " : "   ") . (SubStr(s.value, 1, 4) = "run:" ? "▶ " : "") . s.label)
-    lbS := LauncherGui.Add("ListBox", "w440 r" . rows . " BackgroundFFF9E6", snipItems)
-    lbS.OnEvent("Change", (lb, *) => UseSnippetAt(lb.Value))
+    LauncherLbS := LauncherGui.Add("ListBox", "w440 r" . rows . " BackgroundFFF9E6", snipItems)
+    LauncherLbS.OnEvent("Change", (lb, *) => UseSnippetAt(lb.Value))
     LauncherTab.UseTab()
     if (ClipHistory.Length = 0)
         LauncherTab.Value := 2                        ; 履歴が空なら定型文タブで開く
     LauncherGui.OnEvent("Escape", (*) => CloseLauncher())
-    LauncherGui.OnEvent("ContextMenu", (g, ctrl, *) => ctrl = LauncherDragBar ? (LauncherPos := "", LauncherPinned := false, Flash("固定を解除しました（次回からカーソル位置に表示）")) : 0)
+    LauncherGui.OnEvent("ContextMenu", LauncherContextMenu)
     MouseGetPos &mx, &my
     LauncherGui.Show(LauncherPos != "" ? "x" . LauncherPos.x . " y" . LauncherPos.y : "x" . mx . " y" . my)
     WinActivate("ahk_id " . LauncherGui.Hwnd)
     SetTimer(CheckLauncherFocus, 150)
     SetTimer(LauncherWatchDrag, 30)
+    LauncherHoverLast := "", SetTimer(LauncherWatchHover, 120)
 }
 
 PasteHistoryAt(idx) {
     global ClipHistory
     if (idx < 1 || idx > ClipHistory.Length)
         return
-    text := ClipHistory[idx]
+    text := ClipHistory[idx].text
     CloseLauncher()
     PasteText(text)
 }
@@ -339,6 +334,7 @@ CloseLauncher() {
     global LauncherGui, LauncherPos, LauncherPinned
     SetTimer(CheckLauncherFocus, 0)
     SetTimer(LauncherWatchDrag, 0)
+    SetTimer(LauncherWatchHover, 0), ToolTip()
     if IsObject(LauncherGui) {
         if LauncherPinned
             try WinGetPos(&x, &y, , , LauncherGui), LauncherPos := {x: x, y: y}
@@ -362,6 +358,66 @@ LauncherWatchDrag() {
         MouseGetPos &mx2, &my2
         LauncherGui.Move(winX + (mx2 - startMx), winY + (my2 - startMy))
         Sleep 15
+    }
+}
+
+; マウス直下のListBox項目番号(1始まり)。項目外・末尾より下の空白部は0。
+LauncherItemUnderMouse(lb) {
+    MouseGetPos &mx, &my
+    WinGetClientPos(&cx, &cy, &cw, &ch, "ahk_id " . lb.Hwnd)
+    if (mx < cx || mx >= cx + cw || my < cy || my >= cy + ch)
+        return 0
+    ih := SendMessage(0x1A1, 0, 0, , "ahk_id " . lb.Hwnd)
+    idx := (ih > 0) ? SendMessage(0x18E, 0, 0, , "ahk_id " . lb.Hwnd) + (my - cy) // ih + 1 : 0
+    return (idx < 1 || idx > SendMessage(0x18B, 0, 0, , "ahk_id " . lb.Hwnd)) ? 0 : idx
+}
+
+; ホバー監視: 直下項目の全文(+履歴は時刻)をToolTip表示。hwnd比較ではなく座標の直接判定で決める
+; （MouseGetPosのControl出力はClassNN文字列でありHwndと直接比較できないため）
+LauncherWatchHover() {
+    global LauncherGui, LauncherLbH, LauncherLbS, LauncherHoverLast, ClipHistory, Snippets
+    if !IsObject(LauncherGui)
+        return
+    tip := ""
+    if (idx := LauncherItemUnderMouse(LauncherLbH)) && idx <= ClipHistory.Length
+        tip := ClipHistory[idx].time . " にコピー`n" . SubStr(ClipHistory[idx].text, 1, 600)
+    else if (idx := LauncherItemUnderMouse(LauncherLbS)) && idx <= Snippets.Length
+        tip := SubStr(Snippets[idx].value, 1, 600)
+    if (tip != LauncherHoverLast) {
+        LauncherHoverLast := tip
+        ToolTip(tip)
+    }
+}
+
+; 右クリック: 掴みしろ=固定解除 / 履歴項目=定型文へ昇格
+LauncherContextMenu(g, ctrl, item, isRC, x, y) {
+    global LauncherDragBar, LauncherLbH, LauncherPos, LauncherPinned
+    if (ctrl = LauncherDragBar) {
+        LauncherPos := "", LauncherPinned := false
+        Flash("固定を解除しました（次回からカーソル位置に表示）")
+    } else if (ctrl = LauncherLbH)
+        PromoteHistoryAt(LauncherItemUnderMouse(LauncherLbH))
+}
+
+; 履歴→定型文昇格。IniWriteは使わず、UTF-8明示のFileAppendで追記する
+PromoteHistoryAt(idx) {
+    global ClipHistory
+    if (idx < 1 || idx > ClipHistory.Length)
+        return
+    text := ClipHistory[idx].text
+    CloseLauncher()
+    ib := InputBox("この内容を定型文に登録します。名前を入力:", "定型文に昇格", "w380 h120", SubStr(RegExReplace(text, "\s+", " "), 1, 12))
+    label := (ib.Result = "OK") ? RegExReplace(Trim(ib.Value), "[=\[\];]") : ""
+    if (label = "")
+        return
+    body := StrReplace(StrReplace(text, "`r`n", "`n"), "`n", "\n")
+    path := A_ScriptDir . "\snippets.ini"
+    try {
+        nl := (FileExist(path) && !RegExMatch(FileRead(path, "UTF-8"), "\R$")) ? "`n" : ""
+        FileAppend(nl . label . "=" . body . "`n", path, "UTF-8")
+        Flash("定型文に登録しました: " . label, 1800)
+    } catch as e {
+        Flash("登録に失敗しました: " . e.Message, 2000)
     }
 }
 
