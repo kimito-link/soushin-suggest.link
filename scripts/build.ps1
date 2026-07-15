@@ -22,6 +22,7 @@ $ErrorActionPreference = 'Stop'
 $repo   = Split-Path $PSScriptRoot -Parent
 $src    = Join-Path $repo 'dist\soushin-suggest.ahk'
 $distIni = Join-Path $repo 'dist\sites.ini'
+$distSnippets = Join-Path $repo 'dist\snippets.ini'
 $distReadme = Join-Path $repo 'dist\README.txt'
 
 if (-not (Test-Path $src)) {
@@ -68,7 +69,15 @@ Write-Output ("Compiled: dist\soushin-suggest.exe (" + (Get-Item (Join-Path $rep
 $zip = Join-Path $repo ("dist\soushin-suggest-v" + $Version + ".zip")
 if (Test-Path $zip) { Remove-Item $zip }
 
-Compress-Archive -Path (Join-Path $repo 'dist\soushin-suggest.exe'), $distIni, $distReadme `
+$zipPaths = @(
+    (Join-Path $repo 'dist\soushin-suggest.exe'),
+    $distIni,
+    $distReadme
+)
+if (Test-Path $distSnippets) {
+    $zipPaths += $distSnippets
+}
+Compress-Archive -Path $zipPaths `
     -DestinationPath $zip -CompressionLevel Optimal
 
 Remove-Item $stage -Recurse -Force

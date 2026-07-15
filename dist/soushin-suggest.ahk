@@ -13,7 +13,7 @@ CoordMode "Mouse", "Screen"
 ;  ミドルクリック           -> Git Bash を前面へ（無ければ起動）
 ;  Ctrl+Win+C              -> なぞってコピーのON/OFF切り替え
 ;
-;  対応アプリ・送信ルールは sites.ini で編集できます（同梱）。
+;  対応アプリ・送信ルールは sites.ini、定型文は snippets.ini で編集できます（同梱）。
 ;  トレイの緑の "H" アイコンを右クリック -> Suspend Hotkeys / Exit
 
 global CopyOnSelect := true
@@ -23,8 +23,7 @@ global SiteRules := []
 global ClipHistory := []        ; メモリのみ・非永続（なぞってコピー経由のみ）
 global ClipHistoryMax := 10
 global LongPressSec := 0.35     ; sites.ini [general] longpress= で上書き可
-global LauncherGui := 0
-global LauncherTarget := 0
+global LauncherGui := 0, LauncherTarget := 0, LauncherTab := 0, Snippets := []
 
 ; --- load sites.ini (per-app rules + [sites] title-keyword rules) ---
 ; Uses FileRead+manual parsing rather than IniRead: IniRead (GetPrivateProfileString)
@@ -246,38 +245,97 @@ XButton1:: {
     ShowLauncher()
 }
 
+; --- snippets.ini: ラベル=本文（\n で改行、run:パス で起動）---
+; sites.iniパーサと違い、インラインコメント(;)は剥がさない — 本文に ; が入りうるため。
+; IniRead は使わない（非ASCIIキー誤読の既知の罠。ラベルは日本語になる）。
+LoadSnippets() {
+    items := []
+    path := A_ScriptDir . "\snippets.ini"
+    if !FileExist(path)
+        return items
+    for line in StrSplit(FileRead(path, "UTF-8"), "`n", "`r") {
+        line := Trim(line)
+        if (line = "" || SubStr(line, 1, 1) = ";" || SubStr(line, 1, 1) = "[")
+            continue
+        eq := InStr(line, "=")
+        if !eq
+            continue
+        label := Trim(SubStr(line, 1, eq - 1))
+        val := Trim(SubStr(line, eq + 1))
+        if (label != "" && val != "")
+            items.Push({label: label, value: StrReplace(val, "\n", "`n")})
+    }
+    return items
+}
+
 ShowLauncher() {
-    global ClipHistory, LauncherGui, LauncherTarget
-    if (ClipHistory.Length = 0) {
+    global ClipHistory, LauncherGui, LauncherTarget, Snippets, LauncherTab
+    Snippets := LoadSnippets()                ; 開くたびに読む: iniを編集→次の長押しで即反映
+    if (ClipHistory.Length = 0 && Snippets.Length = 0) {
         ToolTip("履歴がありません（なぞってコピーすると貯まります）")
         SetTimer () => ToolTip(), -1800
         return
     }
-    LauncherTarget := WinExist("A")           ; ペースト先を先に記憶
+    LauncherTarget := WinExist("A")
     CloseLauncher()
     LauncherGui := Gui("-Caption +AlwaysOnTop +ToolWindow +Border")
-    LauncherGui.SetFont("s10", "Meiryo UI")
-    items := []
+    LauncherGui.SetFont("s12", "Meiryo UI")
+    LauncherTab := LauncherGui.Add("Tab3", "w460 -Wrap",
+        ["履歴 " . ClipHistory.Length, "定型文 " . Snippets.Length])
+    rows := Min(Max(ClipHistory.Length, Snippets.Length, 3), 10)
+    LauncherTab.UseTab(1)
+    histItems := []
     for v in ClipHistory {
         s := RegExReplace(v, "\s+", " ")
-        items.Push(StrLen(s) > 40 ? SubStr(s, 1, 40) . "…" : s)
+        histItems.Push(Mod(A_Index, 10) . " " . (StrLen(s) > 58 ? SubStr(s, 1, 58) . "…" : s))
     }
-    lb := LauncherGui.Add("ListBox", "w340 r" . Min(items.Length, 10), items)
-    lb.OnEvent("Change", PasteFromLauncher)
+    lbH := LauncherGui.Add("ListBox", "w440 r" . rows . " BackgroundF0F6FF", histItems)
+    lbH.OnEvent("Change", (lb, *) => PasteHistoryAt(lb.Value))
+    LauncherTab.UseTab(2)
+    snipItems := []
+    for i, s in Snippets
+        snipItems.Push((i <= 10 ? Mod(i, 10) . " " : "   ") . (SubStr(s.value, 1, 4) = "run:" ? "▶ " : "") . s.label)
+    lbS := LauncherGui.Add("ListBox", "w440 r" . rows . " BackgroundFFF9E6", snipItems)
+    lbS.OnEvent("Change", (lb, *) => UseSnippetAt(lb.Value))
+    LauncherTab.UseTab()
+    if (ClipHistory.Length = 0)
+        LauncherTab.Value := 2                        ; 履歴が空なら定型文タブで開く
     LauncherGui.OnEvent("Escape", (*) => CloseLauncher())
     MouseGetPos &mx, &my
     LauncherGui.Show("x" . mx . " y" . my)
     WinActivate("ahk_id " . LauncherGui.Hwnd)
-    SetTimer(CheckLauncherFocus, 150)         ; リスト外クリックで閉じる
+    SetTimer(CheckLauncherFocus, 150)
 }
 
-PasteFromLauncher(lb, *) {
-    global ClipHistory, LauncherTarget
-    idx := lb.Value
-    if (idx < 1)
+PasteHistoryAt(idx) {
+    global ClipHistory
+    if (idx < 1 || idx > ClipHistory.Length)
         return
     text := ClipHistory[idx]
     CloseLauncher()
+    PasteText(text)
+}
+
+UseSnippetAt(idx) {
+    global Snippets
+    if (idx < 1 || idx > Snippets.Length)
+        return
+    s := Snippets[idx]
+    CloseLauncher()
+    if (SubStr(s.value, 1, 4) = "run:") {
+        target := Trim(SubStr(s.value, 5))
+        try Run(target)
+        catch {
+            ToolTip("起動できませんでした: " . target)
+            SetTimer () => ToolTip(), -1800
+        }
+        return
+    }
+    PasteText(s.value)
+}
+
+PasteText(text) {
+    global LauncherTarget
     A_Clipboard := text
     if (LauncherTarget && WinExist("ahk_id " . LauncherTarget))
         WinActivate("ahk_id " . LauncherTarget)
@@ -304,8 +362,21 @@ CloseLauncher() {
     }
 }
 
+LauncherPickKey(hk, *) {
+    n := (hk = "0") ? 10 : Integer(hk)
+    if (LauncherTab.Value = 1)
+        PasteHistoryAt(n)
+    else
+        UseSnippetAt(n)
+}
+
 ; --- 起動時 ---
 LoadSitesConfig()
+; 数字キー1-9,0=10: ランチャーがアクティブな間だけ有効（HotIfスコープ限定・解除処理は不要）
+HotIf (*) => IsObject(LauncherGui) && WinActive("ahk_id " . LauncherGui.Hwnd)
+Loop 10
+    Hotkey Mod(A_Index, 10) . "", LauncherPickKey
+HotIf
 TrayTip("送信サジェスト", "常駐を開始しました", "Mute")
 
 ; トレイメニューに自動起動のON/OFFを追加
