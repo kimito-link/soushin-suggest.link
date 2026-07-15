@@ -21,6 +21,7 @@ $ErrorActionPreference = 'Stop'
 
 $repo   = Split-Path $PSScriptRoot -Parent
 $src    = Join-Path $repo 'dist\soushin-suggest.ahk'
+$icon   = Join-Path $repo 'assets\soushin-suggest.ico'
 $distIni = Join-Path $repo 'dist\sites.ini'
 $distSnippets = Join-Path $repo 'dist\snippets.ini'
 $distReadme = Join-Path $repo 'dist\README.txt'
@@ -29,10 +30,15 @@ if (-not (Test-Path $src)) {
     Write-Error "Source not found: $src"
     exit 1
 }
+if (-not (Test-Path $icon)) {
+    Write-Error "Icon not found: $icon (run scripts\make-icon.ps1 first)"
+    exit 1
+}
 
 $stage = Join-Path $env:TEMP ('ss-build-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Path $stage | Out-Null
 Copy-Item $src (Join-Path $stage 'soushin-suggest.ahk')
+Copy-Item $icon (Join-Path $stage 'soushin-suggest.ico')
 
 $ahk2exe = 'C:\Program Files\AutoHotkey\Compiler\Ahk2Exe.exe'
 $base    = 'C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe'
@@ -51,6 +57,7 @@ $p = Start-Process -FilePath $ahk2exe -ArgumentList @(
     '/silent', 'verbose',
     '/in', "`"$stage\soushin-suggest.ahk`"",
     '/out', "`"$outExe`"",
+    '/icon', "`"$stage\soushin-suggest.ico`"",
     '/base', "`"$base`""
 ) -NoNewWindow -Wait -PassThru `
     -RedirectStandardOutput (Join-Path $stage 'build.log') `
