@@ -194,9 +194,15 @@ PushClipHistory(text) {
             ClipHistory.RemoveAt(i)   ; 重複は先頭へ昇格（時刻も更新される）
             break
         }
-    ClipHistory.InsertAt(1, {text: text, time: FormatTime(, "yyyy/MM/dd HH:mm:ss")})
+    ClipHistory.InsertAt(1, {text: text, time: NowWithWeekday()})
     while (ClipHistory.Length > ClipHistoryMax)
         ClipHistory.Pop()
+}
+
+; FormatTimeの ddd はロケール依存で日本語曜日が出ないことがあるため自前マッピング
+NowWithWeekday() {
+    static wd := ["日", "月", "火", "水", "木", "金", "土"]
+    return FormatTime(, "yyyy/MM/dd") . "(" . wd[FormatTime(, "WDay")] . ") " . FormatTime(, "HH:mm:ss")
 }
 
 ^#c:: {
@@ -276,42 +282,188 @@ EditSnippetsFile(*) {
     Run('notepad.exe "' . path . '"')
 }
 
-; 別ファイルから定型文を追記マージ。既存ラベルと重複するものは飛ばす。
+; RFC4180準拠の1行CSVパース（ダブルクォート囲み・""エスケープ・カンマ/改行含む値に対応）
+; 呼び出し側はセル境界をまたぐ複数行フィールドがある場合を考慮し、行単位ではなく全文を渡すこと
+ParseCsv(text) {
+    rows := [], row := [], field := "", inQuotes := false
+    i := 1, len := StrLen(text)
+    while (i <= len) {
+        c := SubStr(text, i, 1)
+        if inQuotes {
+            if (c = '"') {
+                if (SubStr(text, i + 1, 1) = '"')
+                    field .= '"', i++
+                else
+                    inQuotes := false
+            } else
+                field .= c
+        } else {
+            if (c = '"')
+                inQuotes := true
+            else if (c = ",") {
+                row.Push(field), field := ""
+            } else if (c = "`r") {
+                ; 無視（`n側で改行確定）
+            } else if (c = "`n") {
+                row.Push(field), field := ""
+                rows.Push(row), row := []
+            } else
+                field .= c
+        }
+        i++
+    }
+    if (field != "" || row.Length)
+        row.Push(field), rows.Push(row)
+    return rows
+}
+
+; CSV(label,body の2列)を読み、LoadSnippetsと同じ {label,value} 配列形式で返す
+LoadSnippetsCsv(path) {
+    items := []
+    text := FileRead(path, "UTF-8")
+    text := RegExReplace(text, "^\x{FEFF}")   ; BOM除去
+    rows := ParseCsv(text)
+    for idx, row in rows {
+        if (idx = 1 && row.Length >= 2 && Trim(row[1]) = "label" && Trim(row[2]) = "body")
+            continue   ; ヘッダー行はスキップ
+        if (row.Length < 2)
+            continue
+        label := Trim(row[1]), val := row[2]
+        if (label != "" && val != "")
+            items.Push({label: label, value: val})
+    }
+    return items
+}
+
+; CSVフィールドとして安全な形にエスケープ（カンマ・改行・ダブルクォートを含む場合のみ囲む）
+CsvField(s) {
+    if InStr(s, '"') || InStr(s, ",") || InStr(s, "`n") || InStr(s, "`r")
+        return '"' . StrReplace(s, '"', '""') . '"'
+    return s
+}
+
+; 定型文をCSV(label,body)でエクスポート。他ツール(Excel等)との往復を想定した汎用形式。
+; dlg=trueなら結果をCSVダイアログのステータス行に出す。falseならToolTip(Flash)。
+ExportSnippetsCsv(dlg := false) {
+    items := LoadSnippets()
+    if (items.Length = 0) {
+        dlg ? SetCsvStatus("エクスポートする定型文がありません") : Flash("エクスポートする定型文がありません", 1800)
+        return
+    }
+    f := FileSelect("S16", A_ScriptDir . "\snippets.csv", "エクスポート先を選択", "CSVファイル (*.csv)")
+    if (f = "")
+        return
+    if !RegExMatch(f, "i)\.csv$")
+        f .= ".csv"
+    try {
+        out := Chr(0xFEFF) . "label,body`r`n"   ; UTF-8 BOM付き(Excel文字化け対策)
+        for s in items
+            out .= CsvField(s.label) . "," . CsvField(s.value) . "`r`n"
+        if FileExist(f)
+            FileDelete(f)
+        FileAppend(out, f, "UTF-8")
+        msg := items.Length . " 件をCSVに書き出しました"
+        dlg ? SetCsvStatus(msg) : Flash(msg, 1800)
+    } catch as e {
+        msg := "エクスポートに失敗しました: " . e.Message
+        dlg ? SetCsvStatus(msg) : Flash(msg, 2000)
+    }
+}
+
+; 別ファイルから定型文を取り込む。既定は追記マージ（重複ラベルはスキップ）。
+; clearFirst=true のときは snippets.ini を空にしてから取り込む（Clibor同様の「全クリアして取込」）。
+; 拡張子で自動判別: .csv はCSVパーサ、それ以外(.ini/.txt)は既存のLoadSnippetsを流用。
 ; 書き込みはPromoteHistoryAtと同じ流儀（IniWrite不使用・UTF-8明示のFileAppend）
-ImportSnippets(*) {
-    f := FileSelect(1, , "取り込む定型文ファイルを選択", "定型文ファイル (*.ini; *.txt)")
+ImportSnippets(clearFirst := false, dlg := false) {
+    f := FileSelect(1, , "取り込む定型文ファイルを選択", "定型文ファイル (*.ini; *.txt; *.csv)")
     if (f = "")
         return
     try if (FileGetSize(f) > 1024 * 1024) {
-        Flash("ファイルが大きすぎます（1MB超）", 1800)
+        msg := "ファイルが大きすぎます（1MB超）"
+        dlg ? SetCsvStatus(msg) : Flash(msg, 1800)
         return
     }
-    incoming := LoadSnippets(f)
+    incoming := RegExMatch(f, "i)\.csv$") ? LoadSnippetsCsv(f) : LoadSnippets(f)
     if (incoming.Length = 0) {
-        Flash("取り込める定型文が見つかりませんでした（ラベル=本文 の形式）", 2000)
+        msg := "取り込める定型文が見つかりませんでした（ラベル=本文 の形式）"
+        dlg ? SetCsvStatus(msg) : Flash(msg, 2000)
         return
     }
-    have := Map()
-    for s in LoadSnippets()
-        have[s.label] := 1
     path := A_ScriptDir . "\snippets.ini"
-    added := 0
     try {
+        if clearFirst
+            FileDelete(path)   ; 既存を全クリアしてから取り込む(確認はGUI側で取得済み)
+        have := Map()
+        for s in LoadSnippets()
+            have[s.label] := 1
         nl := (FileExist(path) && !RegExMatch(FileRead(path, "UTF-8"), "\R$")) ? "`n" : ""
+        added := 0
         for s in incoming {
             if have.Has(s.label)
                 continue
             FileAppend(nl . s.label . "=" . StrReplace(s.value, "`n", "\n") . "`n", path, "UTF-8")
             nl := "", added++
         }
-        Flash(added . " 件を取り込みました（重複 " . (incoming.Length - added) . " 件はスキップ）", 2000)
+        msg := added . " 件を取り込みました（重複 " . (incoming.Length - added) . " 件はスキップ）"
+        dlg ? SetCsvStatus(msg) : Flash(msg, 2000)
     } catch as e {
-        Flash("インポートに失敗しました: " . e.Message, 2000)
+        msg := "インポートに失敗しました: " . e.Message
+        dlg ? SetCsvStatus(msg) : Flash(msg, 2000)
     }
 }
 
+; --- 定型文CSV出力/取込ダイアログ（Clibor同等の一画面UI） ---
+global CsvDlgGui := 0, CsvDlgStatus := 0, CsvDlgClearChk := 0
+
+SetCsvStatus(msg) {
+    global CsvDlgStatus
+    if CsvDlgStatus
+        CsvDlgStatus.Text := msg
+}
+
+ShowCsvDialog(*) {
+    global CsvDlgGui, CsvDlgStatus, CsvDlgClearChk
+    if CsvDlgGui {
+        CsvDlgGui.Show()
+        return
+    }
+    CsvDlgGui := Gui("+ToolWindow", "定型文CSV出力/取込")
+    CsvDlgGui.SetFont("s9")
+    CsvDlgGui.Add("GroupBox", "x10 y10 w300 h60", "CSV出力")
+    CsvDlgGui.Add("Text", "x20 y32 w180", "すべての定型文をCSVに書き出します")
+    CsvDlgGui.Add("Button", "x220 y28 w80 h24", "出力(E)").OnEvent("Click", (*) => ExportSnippetsCsv(true))
+
+    CsvDlgGui.Add("GroupBox", "x10 y80 w300 h90", "CSV取込")
+    CsvDlgClearChk := CsvDlgGui.Add("CheckBox", "x20 y102 w280", "定型文を全てクリア後に取り込む")
+    CsvDlgGui.Add("Text", "x20 y126 w180", "ini/txt/csv 形式に対応")
+    CsvDlgGui.Add("Button", "x220 y122 w80 h24", "取込(I)").OnEvent("Click", (*) =>
+        ImportSnippets(CsvDlgClearChk.Value, true))
+
+    CsvDlgStatus := CsvDlgGui.Add("Text", "x10 y182 w300 h20 cGray", "")
+    CsvDlgGui.Add("Button", "x230 y182 w80 h24", "OK(O)").OnEvent("Click", (*) => CsvDlgGui.Hide())
+    CsvDlgGui.OnEvent("Close", (*) => CsvDlgGui.Hide())
+    CsvDlgGui.Show("w320 h215")
+}
+
+; ランチャー右上の歯車から開く設定メニュー。トレイメニューと同じ項目を抜粋して束ねる。
+ShowLauncherSettingsMenu(*) {
+    global LauncherGui, ClipWatchOn
+    SetTimer(CheckLauncherFocus, 0)   ; メニュー表示中の誤クローズ防止(既存の履歴右クリックメニューと同じ流儀)
+    m := Menu()
+    m.Add("クリップボード監視を一時停止", ToggleClipWatch)
+    m.Add("クリップボード履歴を全削除", DeleteHistoryAll)
+    m.Add("定型文ファイルを編集 (snippets.ini)", EditSnippetsFile)
+    m.Add("定型文CSV出力/取込...", ShowCsvDialog)
+    m.Add("設定フォルダを開く", (*) => Run('explorer.exe "' . A_ScriptDir . '"'))
+    if !ClipWatchOn
+        m.Check("クリップボード監視を一時停止")
+    m.Show()
+    if IsObject(LauncherGui)
+        SetTimer(CheckLauncherFocus, 150)
+}
+
 ShowLauncher() {
-    global ClipHistory, LauncherGui, LauncherTarget, Snippets, LauncherTab, LauncherDragBar, LauncherPos, LauncherPinned, LauncherLbH, LauncherLbS, LauncherHoverLast
+    global ClipHistory, LauncherGui, LauncherTarget, Snippets, LauncherTab, LauncherDragBar, LauncherPos, LauncherPinned, LauncherLbH, LauncherLbS, LauncherHoverLast, ClipWatchOn
     Snippets := LoadSnippets()                ; 開くたびに読む: iniを編集→次の長押しで即反映
     if (ClipHistory.Length = 0 && Snippets.Length = 0) {
         Flash("履歴がありません（コピーすると貯まります）", 1800)
@@ -321,8 +473,11 @@ ShowLauncher() {
     CloseLauncher()
     LauncherGui := Gui("-Caption +AlwaysOnTop +ToolWindow +Border")
     LauncherGui.SetFont("s12", "Meiryo UI")
-    LauncherDragBar := LauncherGui.Add("Text", "x0 y0 w400 h16 BackgroundD4DCE8 +0x100")  ; SS_NOTIFY相当をv2既定に加え、押下を明示検知
-    LauncherGui.Add("Text", "x400 y2 w60 h12 cGray", "v1.4.0").SetFont("s8")   ; 掴みしろの右隣にバージョン表示
+    LauncherDragBar := LauncherGui.Add("Text", "x0 y0 w380 h16 BackgroundD4DCE8 +0x100")  ; SS_NOTIFY相当をv2既定に加え、押下を明示検知
+    gearBtn := LauncherGui.Add("Text", "x380 y0 w20 h16 BackgroundD4DCE8 cGray Center +0x100", "⚙")
+    gearBtn.SetFont("s10")
+    gearBtn.OnEvent("Click", ShowLauncherSettingsMenu)
+    LauncherGui.Add("Text", "x400 y2 w60 h12 cGray", "v1.4.1").SetFont("s8")   ; 掴みしろの右隣にバージョン表示
     LauncherGui.SetFont("s12")
     LauncherTab := LauncherGui.Add("Tab3", "x0 y16 w460 -Wrap",
         ["履歴 " . ClipHistory.Length, "定型文 " . Snippets.Length])
@@ -657,10 +812,10 @@ A_TrayMenu.Add(StartupMenuLabel, ToggleStartup)
 A_TrayMenu.Add("クリップボード監視を一時停止", ToggleClipWatch)
 A_TrayMenu.Add("クリップボード履歴を全削除", DeleteHistoryAll)
 A_TrayMenu.Add("定型文ファイルを編集 (snippets.ini)", EditSnippetsFile)
-A_TrayMenu.Add("定型文をインポート（別ファイルから追記）", ImportSnippets)
+A_TrayMenu.Add("定型文CSV出力/取込...", ShowCsvDialog)
 A_TrayMenu.Add("設定フォルダを開く", (*) => Run('explorer.exe "' . A_ScriptDir . '"'))
 A_TrayMenu.Add()  ; セパレータ
-A_TrayMenu.Add("v1.4.0", (*) => 0), A_TrayMenu.Disable("v1.4.0")
+A_TrayMenu.Add("v1.4.1", (*) => 0), A_TrayMenu.Disable("v1.4.1")
 A_TrayMenu.Add()  ; セパレータ
 
 ; 初回起動時（スタートアップ未登録かつ確認未表示）は自動実行を促す
