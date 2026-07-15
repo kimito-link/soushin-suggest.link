@@ -6,7 +6,6 @@ CoordMode "Mouse", "Screen"
 ;  なぞってコピー・右クリック長押しで送信・サイドボタンでスクショ
 ;  Windows 10/11 対応・買い切り・追加課金なし
 ; ============================================================
-;
 ;  左クリック（ドラッグ）  -> 選択範囲を自動コピー（対応アプリのみ）
 ;  右クリック長押し(0.35s) -> サイトに合った送信キーを送る（短押しは通常の右クリック）
 ;  サイドボタン(戻る)      -> 短押し=全画面スクショ / 対応アプリでは長押し=クイックペースト
@@ -16,19 +15,20 @@ CoordMode "Mouse", "Screen"
 ;  対応アプリ・送信ルールは sites.ini、定型文は snippets.ini で編集できます（同梱）。
 ;  トレイの緑の "H" アイコンを右クリック -> Suspend Hotkeys / Exit
 
-global CopyOnSelect := true
-global dragX := 0, dragY := 0, dragT := 0
+global CopyOnSelect := true, dragX := 0, dragY := 0, dragT := 0
 global SitesConfig := Map()
 global SiteRules := []
-global ClipHistory := []        ; メモリのみ・非永続（なぞってコピー経由のみ）
-global ClipHistoryMax := 10
+global ClipHistory := [], ClipHistoryMax := 10   ; メモリのみ・非永続（なぞってコピー経由のみ）
 global LongPressSec := 0.35     ; sites.ini [general] longpress= で上書き可
-global LauncherGui := 0, LauncherTarget := 0, LauncherTab := 0, Snippets := []
+global LauncherGui := 0, LauncherTarget := 0, LauncherTab := 0, Snippets := [], LauncherDragBar := 0, LauncherPos := "", LauncherPinned := false
+
+Flash(msg, ms := 1500) {
+    ToolTip(msg)
+    SetTimer () => ToolTip(), -ms
+}
 
 ; --- load sites.ini (per-app rules + [sites] title-keyword rules) ---
-; Uses FileRead+manual parsing rather than IniRead: IniRead (GetPrivateProfileString)
-; is known to mis-decode non-ASCII keys unless the file is UTF-16 LE, and [sites]
-; needs to hold Japanese keywords (e.g. "ココナラ") reliably as UTF-8.
+; IniReadは使わない: 非ASCIIキーをUTF-16 LE以外で誤読する既知の問題があり、[sites]は日本語キーワードを扱うため
 LoadSitesConfig() {
     global SitesConfig, SiteRules, LongPressSec
     SitesConfig := Map()
@@ -87,40 +87,27 @@ CurrentSendMode() {
     return SitesConfig[exe]
 }
 
-CopyOnSelectApp() {
-    return CurrentSendMode() != ""
-}
+CopyOnSelectApp() => CurrentSendMode() != ""
 
 ; --- スタートアップ登録 (shell:startup にショートカットを作成/削除) ---
 global StartupMenuLabel := ""
 
-StartupShortcutPath() {
-    return A_Startup . "\soushin-suggest.lnk"
-}
-
-IsStartupRegistered() {
-    return FileExist(StartupShortcutPath()) ? true : false
-}
-
-StartupLabelFor(registered) {
-    return registered ? "Windows起動時に自動実行: ON" : "Windows起動時に自動実行: OFF"
-}
+StartupShortcutPath() => A_Startup . "\soushin-suggest.lnk"
+IsStartupRegistered() => FileExist(StartupShortcutPath()) ? true : false
+StartupLabelFor(registered) => registered ? "Windows起動時に自動実行: ON" : "Windows起動時に自動実行: OFF"
 
 EnableStartup() {
     try FileCreateShortcut(A_ScriptFullPath, StartupShortcutPath(), A_ScriptDir)
     catch as e {
-        ToolTip("スタートアップ登録に失敗しました: " . e.Message)
-        SetTimer () => ToolTip(), -2000
+        Flash("スタートアップ登録に失敗しました: " . e.Message, 2000)
         return
     }
-    ToolTip("次回のWindows起動時から自動で立ち上がります")
-    SetTimer () => ToolTip(), -1800
+    Flash("次回のWindows起動時から自動で立ち上がります", 1800)
 }
 
 DisableStartup() {
     try FileDelete(StartupShortcutPath())
-    ToolTip("自動起動を解除しました")
-    SetTimer () => ToolTip(), -1800
+    Flash("自動起動を解除しました", 1800)
 }
 
 ToggleStartup(*) {
@@ -152,8 +139,7 @@ ActivateGitBash() {
             return
         }
     }
-    ToolTip("Git Bash が見つかりませんでした")
-    SetTimer () => ToolTip(), -1500
+    Flash("Git Bash が見つかりませんでした", 1500)
 }
 
 ; --- なぞってコピー: ドラッグ解放でCtrl+Cを送る ---
@@ -176,8 +162,7 @@ ActivateGitBash() {
     Sleep 150
     if (A_Clipboard != "" && A_Clipboard != prev) {
         PushClipHistory(A_Clipboard)
-        ToolTip("コピーしました")
-        SetTimer () => ToolTip(), -800
+        Flash("コピーしました", 800)
     }
 }
 
@@ -196,8 +181,7 @@ PushClipHistory(text) {
 ^#c:: {
     global CopyOnSelect
     CopyOnSelect := !CopyOnSelect
-    ToolTip(CopyOnSelect ? "なぞってコピー: ON" : "なぞってコピー: OFF")
-    SetTimer () => ToolTip(), -1200
+    Flash(CopyOnSelect ? "なぞってコピー: ON" : "なぞってコピー: OFF", 1200)
 }
 
 ; --- 右クリック長押し = 送信サジェスト ---
@@ -215,12 +199,10 @@ $RButton:: {
         return
     }
     mode := CurrentSendMode()
-    if (mode = "manual") {
-        ToolTip("このサイトは送信ボタンを押してください（自動送信非対応）")
-        SetTimer () => ToolTip(), -1800
-    } else {
+    if (mode = "manual")
+        Flash("このサイトは送信ボタンを押してください（自動送信非対応）", 1800)
+    else
         Send("{Enter}")
-    }
 }
 #HotIf
 
@@ -269,17 +251,17 @@ LoadSnippets() {
 }
 
 ShowLauncher() {
-    global ClipHistory, LauncherGui, LauncherTarget, Snippets, LauncherTab
+    global ClipHistory, LauncherGui, LauncherTarget, Snippets, LauncherTab, LauncherDragBar, LauncherPos, LauncherPinned
     Snippets := LoadSnippets()                ; 開くたびに読む: iniを編集→次の長押しで即反映
     if (ClipHistory.Length = 0 && Snippets.Length = 0) {
-        ToolTip("履歴がありません（なぞってコピーすると貯まります）")
-        SetTimer () => ToolTip(), -1800
+        Flash("履歴がありません（なぞってコピーすると貯まります）", 1800)
         return
     }
     LauncherTarget := WinExist("A")
     CloseLauncher()
     LauncherGui := Gui("-Caption +AlwaysOnTop +ToolWindow +Border")
     LauncherGui.SetFont("s12", "Meiryo UI")
+    LauncherDragBar := LauncherGui.Add("Text", "w460 h12 BackgroundD4DCE8 +0x100")  ; SS_NOTIFY相当をv2既定に加え、押下を明示検知
     LauncherTab := LauncherGui.Add("Tab3", "w460 -Wrap",
         ["履歴 " . ClipHistory.Length, "定型文 " . Snippets.Length])
     rows := Min(Max(ClipHistory.Length, Snippets.Length, 3), 10)
@@ -301,10 +283,12 @@ ShowLauncher() {
     if (ClipHistory.Length = 0)
         LauncherTab.Value := 2                        ; 履歴が空なら定型文タブで開く
     LauncherGui.OnEvent("Escape", (*) => CloseLauncher())
+    LauncherGui.OnEvent("ContextMenu", (g, ctrl, *) => ctrl = LauncherDragBar ? (LauncherPos := "", LauncherPinned := false, Flash("固定を解除しました（次回からカーソル位置に表示）")) : 0)
     MouseGetPos &mx, &my
-    LauncherGui.Show("x" . mx . " y" . my)
+    LauncherGui.Show(LauncherPos != "" ? "x" . LauncherPos.x . " y" . LauncherPos.y : "x" . mx . " y" . my)
     WinActivate("ahk_id " . LauncherGui.Hwnd)
     SetTimer(CheckLauncherFocus, 150)
+    SetTimer(LauncherWatchDrag, 30)
 }
 
 PasteHistoryAt(idx) {
@@ -325,10 +309,8 @@ UseSnippetAt(idx) {
     if (SubStr(s.value, 1, 4) = "run:") {
         target := Trim(SubStr(s.value, 5))
         try Run(target)
-        catch {
-            ToolTip("起動できませんでした: " . target)
-            SetTimer () => ToolTip(), -1800
-        }
+        catch
+            Flash("起動できませんでした: " . target, 1800)
         return
     }
     PasteText(s.value)
@@ -354,11 +336,32 @@ CheckLauncherFocus() {
 }
 
 CloseLauncher() {
-    global LauncherGui
+    global LauncherGui, LauncherPos, LauncherPinned
     SetTimer(CheckLauncherFocus, 0)
+    SetTimer(LauncherWatchDrag, 0)
     if IsObject(LauncherGui) {
+        if LauncherPinned
+            try WinGetPos(&x, &y, , , LauncherGui), LauncherPos := {x: x, y: y}
         try LauncherGui.Destroy()
         LauncherGui := 0
+    }
+}
+
+; 掴みしろ監視: バー領域内での左クリック押下を検知したら手動ドラッグループへ
+LauncherWatchDrag() {
+    global LauncherGui, LauncherDragBar, LauncherPinned
+    if !(IsObject(LauncherGui) && IsObject(LauncherDragBar) && GetKeyState("LButton", "P"))
+        return
+    MouseGetPos &mx, &my
+    LauncherDragBar.GetPos(&bx, &by, &bw, &bh)
+    LauncherGui.GetPos(&gx, &gy)
+    if !(mx >= gx + bx && mx <= gx + bx + bw && my >= gy + by && my <= gy + by + bh)
+        return
+    LauncherPinned := true, winX := gx, winY := gy, startMx := mx, startMy := my
+    while GetKeyState("LButton", "P") {
+        MouseGetPos &mx2, &my2
+        LauncherGui.Move(winX + (mx2 - startMx), winY + (my2 - startMy))
+        Sleep 15
     }
 }
 
