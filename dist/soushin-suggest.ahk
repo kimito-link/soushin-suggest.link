@@ -278,12 +278,7 @@ ShowLauncher() {
         ["履歴 " . ClipHistory.Length, "定型文 " . Snippets.Length])
     rows := Min(Max(ClipHistory.Length, Snippets.Length, 3), 10)
     LauncherTab.UseTab(1)
-    histItems := []
-    for v in ClipHistory {
-        s := RegExReplace(v.text, "\s+", " ")
-        histItems.Push(Mod(A_Index, 10) . " " . (StrLen(s) > 58 ? SubStr(s, 1, 58) . "…" : s))
-    }
-    LauncherLbH := LauncherGui.Add("ListBox", "w440 r" . rows . " BackgroundF0F6FF", histItems)
+    LauncherLbH := LauncherGui.Add("ListBox", "w440 r" . rows . " BackgroundF0F6FF", HistoryListItems())
     LauncherLbH.OnEvent("Change", (lb, *) => PasteHistoryAt(lb.Value))
     LauncherTab.UseTab(2)
     snipItems := []
@@ -477,14 +472,58 @@ LauncherWatchHover() {
     }
 }
 
-; 右クリック: 掴みしろ=固定解除 / 履歴項目=定型文へ昇格
+; 右クリック: 掴みしろ=固定解除 / 履歴項目=メニュー（昇格・削除）
 LauncherContextMenu(g, ctrl, item, isRC, x, y) {
-    global LauncherDragBar, LauncherLbH, LauncherPos, LauncherPinned
+    global LauncherDragBar, LauncherLbH, LauncherPos, LauncherPinned, ClipHistory, LauncherGui
     if (ctrl = LauncherDragBar) {
         LauncherPos := "", LauncherPinned := false
         Flash("固定を解除しました（次回からカーソル位置に表示）")
-    } else if (ctrl = LauncherLbH)
-        PromoteHistoryAt(LauncherItemUnderMouse(LauncherLbH))
+    } else if (ctrl = LauncherLbH) {
+        idx := LauncherItemUnderMouse(LauncherLbH)
+        if (idx < 1 || idx > ClipHistory.Length)
+            return
+        SetTimer(CheckLauncherFocus, 0)       ; メニュー表示中の誤クローズ防止(必須)
+        m := Menu()
+        m.Add("定型文に登録", (*) => PromoteHistoryAt(idx))
+        m.Add("この履歴を削除", (*) => DeleteHistoryAt(idx))
+        m.Add("履歴を全削除", (*) => DeleteHistoryAll())
+        m.Show()
+        if IsObject(LauncherGui)
+            SetTimer(CheckLauncherFocus, 150)
+    }
+}
+
+DeleteHistoryAt(idx) {
+    global ClipHistory
+    if (idx >= 1 && idx <= ClipHistory.Length)
+        ClipHistory.RemoveAt(idx)
+    RefreshLauncherHistory()
+}
+
+DeleteHistoryAll(*) {                          ; トレイメニューからも呼ぶため可変引数
+    global ClipHistory
+    ClipHistory := []
+    RefreshLauncherHistory()
+    Flash("履歴を全削除しました", 1200)
+}
+
+RefreshLauncherHistory() {
+    global LauncherGui, LauncherLbH
+    if !IsObject(LauncherGui)
+        return
+    LauncherLbH.Delete()
+    LauncherLbH.Add(HistoryListItems())
+}
+
+; ShowLauncherの履歴フォーマット部を関数化して共用。11件目以降は番号なし(数字キー対象外)
+HistoryListItems() {
+    global ClipHistory
+    items := []
+    for i, v in ClipHistory {
+        s := RegExReplace(v.text, "\s+", " ")
+        items.Push((i <= 10 ? Mod(i, 10) . " " : "   ") . (StrLen(s) > 58 ? SubStr(s, 1, 58) . "…" : s))
+    }
+    return items
 }
 
 ; 履歴→定型文昇格。IniWriteは使わず、UTF-8明示のFileAppendで追記する
