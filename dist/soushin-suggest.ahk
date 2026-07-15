@@ -11,9 +11,10 @@ CoordMode "Mouse", "Screen"
 ;  サイドボタン(戻る)      -> 短押し=全画面スクショ / 対応アプリでは長押し=クイックペースト
 ;  ミドルクリック           -> Git Bash を前面へ（無ければ起動）
 ;  Ctrl+Win+C              -> なぞってコピーのON/OFF切り替え
+;  Ctrl+Win+V              -> クイックペーストを開く（マウスなしでも呼び出せる）
 ;
 ;  対応アプリ・送信ルールは sites.ini、定型文は snippets.ini で編集できます（同梱）。
-;  トレイの緑の "H" アイコンを右クリック -> Suspend Hotkeys / Exit
+;  トレイのアイコンを右クリック -> Suspend Hotkeys / Exit
 
 global CopyOnSelect := true, dragX := 0, dragY := 0, dragT := 0
 global SitesConfig := Map()
@@ -205,6 +206,7 @@ $RButton:: {
 MButton::ActivateGitBash()
 #HotIf
 ^#t::ActivateGitBash()
+^#v::ShowLauncher()   ; キーボードからクイックペースト（Clibor風・アプリを問わず有効）
 
 ; --- サイドボタン(戻る): 短押し=スクショ / 対応アプリでは長押し=クイックペースト ---
 XButton1:: {
