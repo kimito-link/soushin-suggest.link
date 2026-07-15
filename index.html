@@ -1031,6 +1031,30 @@ p.lede { color: var(--muted); font-size: 14px; margin: 10px 0 0; max-width: 58ch
   .stat-grid { grid-template-columns: 1fr; }
 }
 
+/* one-stroke flow — 2 mouse ops as vertical step cards with connectors */
+.flow-steps { display: flex; flex-direction: column; gap: 0; margin-top: 24px; max-width: 560px; }
+.flow-card { position: relative; background: var(--panel-soft); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px 18px 16px; }
+.flow-card + .flow-card { margin-top: 34px; }
+.flow-card + .flow-card::before {
+  content: "↓"; position: absolute; top: -30px; left: 50%; transform: translateX(-50%);
+  font-size: 18px; font-weight: 800; color: var(--accent);
+}
+.flow-num { position: absolute; top: -12px; left: 14px; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 13px; font-weight: 800; display: grid; place-items: center; }
+.flow-card h3 { font-size: 15.5px; margin: 0 0 6px; overflow-wrap: break-word; }
+.flow-card > p { font-size: 13px; color: var(--muted); margin: 0 0 10px; overflow-wrap: break-word; }
+.flow-badges { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.flow-badge-skip { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); text-decoration: line-through; opacity: .6; }
+.flow-badge-skip::after { content: "不要"; text-decoration: none; font-weight: 800; font-size: 10.5px; color: var(--accent); margin-left: 4px; display: inline-block; }
+.flow-note { font-size: 11.5px; color: var(--muted); margin: 0 0 10px; }
+.flow-alt { border: 1px dashed var(--line); border-radius: 10px; padding: 8px 10px; font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+.flow-char { display: flex; gap: 6px; font-size: 12.5px; font-weight: 700; color: var(--fg); border-top: 1px solid var(--line); padding-top: 10px; }
+.flow-char .who { flex-shrink: 0; font-size: 10.5px; font-weight: 800; color: var(--muted); align-self: center; }
+@media (min-width: 821px) {
+  .flow-steps { max-width: none; display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .flow-card + .flow-card { margin-top: 0; }
+  .flow-card + .flow-card::before { content: "→"; top: 50%; left: -18px; transform: translateY(-50%); }
+}
+
 /* steps — 導入の流れ STEP 01-03 */
 .step-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
 .step-card { position: relative; background: var(--panel-soft); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px 16px; }
@@ -2410,6 +2434,42 @@ footer { padding: 32px 0 48px; }
           </div>
         </div>
       </div>
+    </div>
+  </div>
+</section>
+
+<section id="mouse-flow">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="section-eyebrow">one stroke</div>
+      <h2>操作の流れは、ひと筆書き。</h2>
+      <p class="lede">文章をなぞって、送り先で右クリック長押し。コピーも貼り付けも送信も、この一本の線の上にあります。</p>
+    </div>
+    <div class="flow-steps">
+
+      <div class="flow-card">
+        <div class="flow-num">1</div>
+        <h3>なぞる＝コピー完了</h3>
+        <p>文章をドラッグでなぞって離すだけ。その瞬間、コピーは終わっています。</p>
+        <div class="flow-badges">
+          <span class="story-hand-badge"><span class="emoji">🖱️</span>なぞる</span>
+          <span class="flow-badge-skip"><span class="emoji">⌨️</span>Ctrl + C</span>
+        </div>
+        <p class="flow-note">Windows標準では「選択→Ctrl+C」の2段階。送信サジェストでは、なぞった時点でコピー済みです。</p>
+        <div class="flow-char"><span class="who">りんく</span>なぞって離した瞬間、もうコピーされてるよ。</div>
+      </div>
+
+      <div class="flow-card">
+        <div class="flow-num">2</div>
+        <h3>長押し＝貼り付けて送信</h3>
+        <p>送り先の入力欄で右クリックを0.35秒長押し。貼り付けと送信がこの1回で同時に終わります。</p>
+        <div class="flow-badges">
+          <span class="story-hand-badge"><span class="emoji">🖱️</span>右クリック長押し</span>
+        </div>
+        <div class="flow-alt"><span class="emoji">⌨️</span>キーボード派は Ctrl + Enter でも同じ送信ができます。</div>
+        <div class="flow-char"><span class="who">たぬ姉</span>短い右クリックはいつものメニューのまま。長押しだけの反応だから誤爆しないの。</div>
+      </div>
+
     </div>
   </div>
 </section>
