@@ -38,7 +38,7 @@ Flash(msg, ms := 1500) {
 ; --- load sites.ini (per-app rules + [sites] title-keyword rules) ---
 ; IniReadは使わない: 非ASCIIキーをUTF-16 LE以外で誤読する既知の問題があり、[sites]は日本語キーワードを扱うため
 LoadSitesConfig() {
-    global SitesConfig, SiteRules, LongPressSec
+    global SitesConfig, SiteRules, LongPressSec, ClipWatchOn, ClipHistoryMax, ClipAutoClearSec, ClipExcludeExes
     SitesConfig := Map()
     SiteRules := []
     iniPath := A_ScriptDir . "\sites.ini"
@@ -71,7 +71,19 @@ LoadSitesConfig() {
             SiteRules.Push({keyword: key, mode: StrLower(val)})
         else if (section = "general" && StrLower(key) = "longpress" && IsNumber(val))
             LongPressSec := val + 0
-        else if (section != "" && StrLower(key) = "send")
+        else if (section = "clipboard") {
+            k := StrLower(key)
+            if (k = "watch")
+                ClipWatchOn := (StrLower(val) != "off")
+            else if (k = "max" && IsNumber(val))
+                ClipHistoryMax := Integer(val)
+            else if (k = "autoclear" && IsNumber(val))
+                ClipAutoClearSec := val + 0
+            else if (k = "exclude")
+                for e in StrSplit(val, ",")
+                    if (Trim(e) != "")
+                        ClipExcludeExes[StrLower(Trim(e))] := 1
+        } else if (section != "" && StrLower(key) = "send")
             SitesConfig[section] := StrLower(val)
     }
 }
