@@ -20,7 +20,7 @@ global SitesConfig := Map()
 global SiteRules := []
 global ClipHistory := [], ClipHistoryMax := 30   ; {text,time}の配列・メモリのみ・非永続 — 永続化禁止(唯一の安全特性。エクスポートも不可。経緯は_docs参照)
 global LongPressSec := 0.35     ; sites.ini [general] longpress= で上書き可
-global LauncherGui := 0, LauncherTarget := 0, LauncherTab := 0, Snippets := [], LauncherDragBar := 0, LauncherPos := "", LauncherPinned := false, LauncherLbH := 0, LauncherLbS := 0, LauncherHoverLast := ""
+global LauncherGui := 0, LauncherTarget := 0, LauncherTab := 0, Snippets := [], LauncherDragBar := 0, LauncherPos := "", LauncherPinned := false, LauncherLvH := 0, LauncherLbS := 0, LauncherHoverLast := ""
 global ClipWatchOn := true                ; トレイから一時停止可
 global LastUserCopyTick := 0              ; ^c/^x/^Ins・なぞってコピー送信の時刻
 global LastLButtonUpTick := 0             ; 右クリックメニュー「コピー」等のクリック由来を救う
@@ -500,10 +500,13 @@ ShowSnippetManager(*) {
     SnipMgrHistCount := SnipMgrGui.Add("Text", "x344 y40 w246 h20 cGray", "")
     ; 履歴LVにもNoSort NoSortHdrを付ける: ソートされると行↔SnipMgrHistRows対応が崩れ、
     ; 選んだのと違う行がコピーされる事故になる（定型文タブと同じ理由）
-    SnipMgrHistLV := SnipMgrGui.Add("ListView", "x10 y66 w580 h240 -Multi NoSort NoSortHdr +Grid",
+    ; +0x40=LVS_SHAREIMAGELISTS: ランチャーとImageListを共有するため、このLVが破棄されても
+    ; 共有ImageList(HistThumbIL)が道連れ破壊されないようにする(付け忘れると相互に壊れる)。
+    SnipMgrHistLV := SnipMgrGui.Add("ListView", "x10 y66 w580 h240 -Multi NoSort NoSortHdr +Grid +0x40",
         ["コピー日時", "本文"])
     SnipMgrHistLV.ModifyCol(1, 150), SnipMgrHistLV.ModifyCol(2, 400)
     EnsureHistThumbIL()                       ; 画像履歴の実サムネイル表示用ImageList
+    SnipMgrHistLV.SetImageList(HistThumbIL, 1)
     SnipMgrHistLV.OnEvent("ItemSelect", SnipMgrHistOnSelect)
     SnipMgrHistLV.OnEvent("DoubleClick", (lv, row) => SnipMgrHistCopy())
     SnipMgrGui.Add("Text", "x10 y316 w50 h20", "全文")
@@ -709,7 +712,7 @@ SnipMgrImport(*) {
 }
 
 ShowLauncher() {
-    global ClipHistory, LauncherGui, LauncherTarget, Snippets, LauncherTab, LauncherDragBar, LauncherPos, LauncherPinned, LauncherLbH, LauncherLbS, LauncherHoverLast, ClipWatchOn
+    global ClipHistory, LauncherGui, LauncherTarget, Snippets, LauncherTab, LauncherDragBar, LauncherPos, LauncherPinned, LauncherLvH, LauncherLbS, LauncherHoverLast, ClipWatchOn
     Snippets := LoadSnippets()                ; 開くたびに読む: iniを編集→次の長押しで即反映
     if (ClipHistory.Length = 0 && Snippets.Length = 0) {
         Flash("履歴がありません（コピーすると貯まります）", 1800)
@@ -723,14 +726,23 @@ ShowLauncher() {
     gearBtn := LauncherGui.Add("Text", "x380 y0 w20 h16 BackgroundD4DCE8 cGray Center +0x100", "⚙")
     gearBtn.SetFont("s10")
     gearBtn.OnEvent("Click", ShowLauncherSettingsMenu)
-    LauncherGui.Add("Text", "x400 y2 w60 h12 cGray", "v1.7.0").SetFont("s8")   ; 掴みしろの右隣にバージョン表示
+    LauncherGui.Add("Text", "x400 y2 w60 h12 cGray", "v1.8.0").SetFont("s8")   ; 掴みしろの右隣にバージョン表示
     LauncherGui.SetFont("s12")
     LauncherTab := LauncherGui.Add("Tab3", "x0 y16 w460 -Wrap",
         ["履歴 " . ClipHistory.Length, "定型文 " . Snippets.Length])
     rows := Min(Max(ClipHistory.Length, Snippets.Length, 3), 10)
     LauncherTab.UseTab(1)
-    LauncherLbH := LauncherGui.Add("ListBox", "w440 r" . rows . " BackgroundF0F6FF", HistoryListItems())
-    LauncherLbH.OnEvent("Change", (lb, *) => PasteHistoryAt(lb.Value))
+    ; 履歴タブ: ListView化(1列・ヘッダなし)。+0x40=LVS_SHAREIMAGELISTS が生命線:
+    ; これが無いとGui.Destroy()のたびに共有ImageList(HistThumbIL)が道連れ破壊される。
+    RebuildHistThumbILIfBloated()             ; 充填前に肥大チェック(SnipMgrHistRefreshと同じ順序)
+    LauncherLvH := LauncherGui.Add("ListView"
+        , "w440 r" . rows . " -Hdr -Multi NoSort +0x40 BackgroundF0F6FF", ["履歴"])
+    LauncherLvH.Opt("+LV0x10000")             ; LVS_EX_DOUBLEBUFFER: 再描画のチラつき防止
+    EnsureHistThumbIL()
+    LauncherLvH.SetImageList(HistThumbIL, 1)  ; 1=Small(レポート表示で使われる側)
+    LauncherLvH.ModifyCol(1, 416)             ; 440 - スクロールバー/枠ぶん
+    FillLauncherHistoryLV(LauncherLvH)
+    LauncherLvH.OnEvent("ItemSelect", LauncherHistSelect)
     LauncherTab.UseTab(2)
     snipItems := []
     for i, s in Snippets
@@ -740,6 +752,15 @@ ShowLauncher() {
     LauncherTab.UseTab()
     if (ClipHistory.Length = 0)
         LauncherTab.Value := 2                        ; 履歴が空なら定型文タブで開く
+    ; r行指定はアイコン行高(約36px)を知らずに文字高で計算されるため、実測して合わせる。
+    if (ih := LauncherLVItemHeight(LauncherLvH)) {
+        listH := ih * rows + 6
+        LauncherLvH.GetPos(&lvX, &lvY, , &lvH0)
+        LauncherLvH.Move(, , , listH)
+        LauncherLbS.Move(, , , listH)         ; 定型文側も同じ箱サイズに(タブ切替で高さが揃う)
+        LauncherTab.GetPos(&tX, &tY, , &tH0)
+        LauncherTab.Move(, , , tH0 + (listH - lvH0))
+    }
     ; ブランドロゴ: フッター(Tab3コントロールの下端に明示座標で追従)に中央揃えで控えめに表示。
     ; リスト行数(rows)でTab3の下端が動くため、Tab3.GetPos()で実際の下端を取得してから置く。
     ; 画像は102x64(2:1)。wのみ指定してhは-1でアスペクト比を保たせ、横伸びを防ぐ。
@@ -767,6 +788,13 @@ PasteHistoryAt(idx) {
     v := ClipHistory[idx]
     CloseLauncher()
     (v.type = "image") ? PasteImage(v.dib) : PasteText(v.text)
+}
+
+; クリック(選択)→即ペースト。旧ListBox Changeイベントの後継(履歴タブのListView化に伴う)。
+LauncherHistSelect(lv, row, selected) {
+    if (!selected || GetKeyState("RButton", "P"))   ; 選択解除時と、右クリック由来の選択では発火させない
+        return
+    PasteHistoryAt(row)
 }
 
 UseSnippetAt(idx) {
@@ -935,19 +963,21 @@ PasteImage(dib) {
 ; （「ハンドルを持ち越さない」という画像履歴全体の設計思想を、表示層でも守るため）。
 global HistThumbIL := 0
 
+; ILの生成のみ。SetImageListでのビューへの紐付けは各呼び出し元の責務（ビューは複数あるため）。
 EnsureHistThumbIL() {
-    global HistThumbIL, SnipMgrHistLV
+    global HistThumbIL
     if HistThumbIL
         return
     HistThumbIL := DllCall("comctl32\ImageList_Create"
-        , "Int", 32, "Int", 32, "UInt", 0x20, "Int", 4, "Int", 4, "Ptr")  ; ILC_COLOR32
-    SnipMgrHistLV.SetImageList(HistThumbIL, 1)   ; 1=Small: レポート表示で使われるリスト
+        , "Int", 48, "Int", 48, "UInt", 0x20, "Int", 4, "Int", 4, "Ptr")  ; ILC_COLOR32
 }
 
 ; 孤児アイコン(履歴から間引かれても残り続けるImageList内の画像)によるメモリ肥大を防ぐ。
 ; 差し替え時はLVM_SETIMAGELISTが旧ILを破棄しないため明示的にImageList_Destroyする。
+; HistThumbILは「定型文の管理」とランチャーで共有(LVS_SHAREIMAGELISTS)しているため、
+; 再構築時は生存中の両ビューへ再アサイン→再充填してから、最後に旧ILを破棄する。
 RebuildHistThumbILIfBloated() {
-    global HistThumbIL, ClipHistory, SnipMgrHistLV
+    global HistThumbIL, ClipHistory, SnipMgrHistLV, LauncherGui, LauncherLvH
     if (!HistThumbIL || DllCall("comctl32\ImageList_GetImageCount", "Ptr", HistThumbIL, "Int") <= 32)
         return
     old := HistThumbIL
@@ -956,7 +986,13 @@ RebuildHistThumbILIfBloated() {
         if (v.type = "image")
             v.DeleteProp("thumbIdx")
     EnsureHistThumbIL()
-    DllCall("comctl32\ImageList_Destroy", "Ptr", old)
+    if IsObject(SnipMgrHistLV)                ; 未生成なら0
+        SnipMgrHistLV.SetImageList(HistThumbIL, 1)
+    if IsObject(LauncherGui) {                 ; 理論上の競合窓(通常はフォーカス喪失で閉済み)も塞ぐ
+        LauncherLvH.SetImageList(HistThumbIL, 1)
+        FillLauncherHistoryLV(LauncherLvH)    ; 旧indexを持つ行を貼り替え
+    }
+    DllCall("comctl32\ImageList_Destroy", "Ptr", old)   ; 再アサイン完了後に旧ILを破棄(この順序を守る)
 }
 
 ; CF_DIB(BITMAPFILEHEADERなし)先頭からピクセルデータまでのオフセット。0=描画非対応(fail-closed)
@@ -974,10 +1010,10 @@ DibBitsOffset(dib) {
 }
 
 ; 画像要素1件→ImageListへ追加し0始まりindexを返す。失敗は-1(プレースホルダー表示のまま)
-; 等倍HBITMAPを一度も作らず、CF_DIBバッファから32x32へ直接縮小描画する(StretchDIBits)。
+; 等倍HBITMAPを一度も作らず、CF_DIBバッファから48x48へ直接縮小描画する(StretchDIBits)。
 MakeHistThumb(v) {
     global HistThumbIL
-    static TW := 32, TH := 32, SRCCOPY := 0x00CC0020, HALFTONE := 4, WHITE_BRUSH := 0
+    static TW := 48, TH := 48, SRCCOPY := 0x00CC0020, HALFTONE := 4, WHITE_BRUSH := 0
     off := DibBitsOffset(v.dib)
     if (!off || v.w < 1 || v.h < 1)
         return -1
@@ -1096,7 +1132,7 @@ LauncherWatchDrag() {
     }
 }
 
-; マウス直下のListBox項目番号(1始まり)。項目外・末尾より下の空白部は0。
+; マウス直下のListBox項目番号(1始まり)。項目外・末尾より下の空白部は0。（定型文タブ用）
 LauncherItemUnderMouse(lb) {
     MouseGetPos &mx, &my
     WinGetClientPos(&cx, &cy, &cw, &ch, "ahk_id " . lb.Hwnd)
@@ -1107,14 +1143,33 @@ LauncherItemUnderMouse(lb) {
     return (idx < 1 || idx > SendMessage(0x18B, 0, 0, , "ahk_id " . lb.Hwnd)) ? 0 : idx
 }
 
+; マウス直下のListView行番号(1始まり)。行外は0。LB版(LauncherItemUnderMouse)のLV版（履歴タブ用）。
+LauncherLVItemUnderMouse(lv) {
+    MouseGetPos &mx, &my
+    WinGetClientPos(&cx, &cy, &cw, &ch, "ahk_id " . lv.Hwnd)
+    if (mx < cx || mx >= cx + cw || my < cy || my >= cy + ch)
+        return 0
+    ht := Buffer(24, 0)                       ; LVHITTESTINFO {POINT, flags, iItem, iSubItem, iGroup}
+    NumPut("Int", mx - cx, ht, 0), NumPut("Int", my - cy, ht, 4)
+    return SendMessage(0x1012, 0, ht.Ptr, , "ahk_id " . lv.Hwnd) + 1   ; LVM_HITTEST: -1(なし)→0
+}
+
+; 1行目の外接矩形から実際の行高を得る。行ゼロ時は0(fail-closed: リサイズしないだけ)
+LauncherLVItemHeight(lv) {
+    rc := Buffer(16, 0)                       ; rc.left=0 (LVIR_BOUNDS)
+    if !SendMessage(0x100E, 0, rc.Ptr, , "ahk_id " . lv.Hwnd)   ; LVM_GETITEMRECT, wParam=item0
+        return 0
+    return NumGet(rc, 12, "Int") - NumGet(rc, 4, "Int")
+}
+
 ; ホバー監視: 直下項目の全文(+履歴は時刻)をToolTip表示。hwnd比較ではなく座標の直接判定で決める
 ; （MouseGetPosのControl出力はClassNN文字列でありHwndと直接比較できないため）
 LauncherWatchHover() {
-    global LauncherGui, LauncherLbH, LauncherLbS, LauncherHoverLast, ClipHistory, Snippets
+    global LauncherGui, LauncherLvH, LauncherLbS, LauncherHoverLast, ClipHistory, Snippets
     if !IsObject(LauncherGui)
         return
     tip := ""
-    if (idx := LauncherItemUnderMouse(LauncherLbH)) && idx <= ClipHistory.Length
+    if (idx := LauncherLVItemUnderMouse(LauncherLvH)) && idx <= ClipHistory.Length
         tip := ClipHistory[idx].time . " にコピー`n" . SubStr(ClipHistory[idx].text, 1, 600)
     else if (idx := LauncherItemUnderMouse(LauncherLbS)) && idx <= Snippets.Length
         tip := SubStr(Snippets[idx].value, 1, 600)
@@ -1126,12 +1181,12 @@ LauncherWatchHover() {
 
 ; 右クリック: 掴みしろ=固定解除 / 履歴項目=メニュー（開く・昇格・削除）
 LauncherContextMenu(g, ctrl, item, isRC, x, y) {
-    global LauncherDragBar, LauncherLbH, LauncherPos, LauncherPinned, ClipHistory, LauncherGui
+    global LauncherDragBar, LauncherLvH, LauncherPos, LauncherPinned, ClipHistory, LauncherGui
     if (ctrl = LauncherDragBar) {
         LauncherPos := "", LauncherPinned := false
         Flash("固定を解除しました（次回からカーソル位置に表示）")
-    } else if (ctrl = LauncherLbH) {
-        idx := LauncherItemUnderMouse(LauncherLbH)
+    } else if (ctrl = LauncherLvH) {
+        idx := LauncherLVItemUnderMouse(LauncherLvH)
         if (idx < 1 || idx > ClipHistory.Length)
             return
         SetTimer(CheckLauncherFocus, 0)       ; メニュー表示中の誤クローズ防止(必須)
@@ -1197,22 +1252,24 @@ ToggleClipWatch(name, *) {
 }
 
 RefreshLauncherHistory() {
-    global LauncherGui, LauncherLbH
+    global LauncherGui, LauncherLvH
     if !IsObject(LauncherGui)
         return
-    LauncherLbH.Delete()
-    LauncherLbH.Add(HistoryListItems())
+    FillLauncherHistoryLV(LauncherLvH)
 }
 
-; ShowLauncherの履歴フォーマット部を関数化して共用。11件目以降は番号なし(数字キー対象外)
-HistoryListItems() {
+; ShowLauncherとRefreshLauncherHistoryで共用。11件目以降は番号なし(数字キー対象外)。
+; Icon0省略不可(省略すると全行に1枚目が出る既知の仕様。SnipMgrHistRefreshと同じ)
+FillLauncherHistoryLV(lv) {
     global ClipHistory
-    items := []
+    lv.Opt("-Redraw")
+    lv.Delete()
     for i, v in ClipHistory {
         s := RegExReplace(v.text, "\s+", " ")
-        items.Push((i <= 10 ? Mod(i, 10) . " " : "   ") . (StrLen(s) > 58 ? SubStr(s, 1, 58) . "…" : s))
+        txt := (i <= 10 ? Mod(i, 10) . " " : "   ") . (StrLen(s) > 58 ? SubStr(s, 1, 58) . "…" : s)
+        lv.Add((v.type = "image") ? "Icon" . (HistThumbIndex(v) + 1) : "Icon0", txt)
     }
-    return items
+    lv.Opt("+Redraw")
 }
 
 ; 履歴→定型文昇格。IniWriteは使わず、UTF-8明示のFileAppendで追記する
@@ -1264,7 +1321,7 @@ A_TrayMenu.Add("定型文ファイルを編集 (snippets.ini)", EditSnippetsFile
 A_TrayMenu.Add("定型文の管理...", ShowSnippetManager)
 A_TrayMenu.Add("設定フォルダを開く", (*) => Run('explorer.exe "' . A_ScriptDir . '"'))
 A_TrayMenu.Add()  ; セパレータ
-A_TrayMenu.Add("v1.7.0", (*) => 0), A_TrayMenu.Disable("v1.7.0")
+A_TrayMenu.Add("v1.8.0", (*) => 0), A_TrayMenu.Disable("v1.8.0")
 A_TrayMenu.Add()  ; セパレータ
 
 ; 初回起動時（スタートアップ未登録かつ確認未表示）は自動実行を促す
