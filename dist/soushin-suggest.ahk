@@ -22,7 +22,7 @@ global ClipHistory := [], ClipHistoryMax := 30   ; {text,time}の配列・メモ
 ; 既定は非永続。archiveimage/archivetextトグルによる明示オプトイン例外あり(検疫付き・既定OFF)。
 ; 経緯は_docs/CLIPBOARD-HISTORY-FOLDER-ARCHIVE-DESIGN.md参照
 global LongPressSec := 0.35     ; sites.ini [general] longpress= で上書き可
-global LauncherGui := 0, LauncherTarget := 0, LauncherTab := 0, Snippets := [], LauncherDragBar := 0, LauncherPos := "", LauncherPinned := false, LauncherLvH := 0, LauncherLbS := 0, LauncherHoverLast := ""
+global LauncherGui := 0, LauncherTarget := 0, LauncherTab := 0, Snippets := [], LauncherDragBar := 0, LauncherLvH := 0, LauncherLbS := 0, LauncherHoverLast := ""
 global ClipWatchOn := true                ; トレイから一時停止可
 global LastUserCopyTick := 0              ; ^c/^x/^Ins・なぞってコピー送信の時刻
 global LastLButtonUpTick := 0             ; 右クリックメニュー「コピー」等のクリック由来を救う
@@ -835,7 +835,7 @@ SnipMgrImport(*) {
 }
 
 ShowLauncher() {
-    global ClipHistory, LauncherGui, LauncherTarget, Snippets, LauncherTab, LauncherDragBar, LauncherPos, LauncherPinned, LauncherLvH, LauncherLbS, LauncherHoverLast, ClipWatchOn
+    global ClipHistory, LauncherGui, LauncherTarget, Snippets, LauncherTab, LauncherDragBar, LauncherLvH, LauncherLbS, LauncherHoverLast, ClipWatchOn
     Snippets := LoadSnippets()                ; 開くたびに読む: iniを編集→次の長押しで即反映
     if (ClipHistory.Length = 0 && Snippets.Length = 0) {
         Flash("履歴がありません（コピーすると貯まります）", 1800)
@@ -898,7 +898,7 @@ ShowLauncher() {
     LauncherGui.OnEvent("Escape", (*) => CloseLauncher())
     LauncherGui.OnEvent("ContextMenu", LauncherContextMenu)
     MouseGetPos &mx, &my
-    LauncherGui.Show(LauncherPos != "" ? "x" . LauncherPos.x . " y" . LauncherPos.y : "x" . mx . " y" . my)
+    LauncherGui.Show("x" . mx . " y" . my)   ; Cliborと同じく毎回カーソル位置に開く（位置固定はしない）
     WinActivate("ahk_id " . LauncherGui.Hwnd)
     SetTimer(CheckLauncherFocus, 150)
     SetTimer(LauncherWatchDrag, 30)
@@ -1457,21 +1457,20 @@ CheckLauncherFocus() {
 }
 
 CloseLauncher() {
-    global LauncherGui, LauncherPos, LauncherPinned
+    global LauncherGui
     SetTimer(CheckLauncherFocus, 0)
     SetTimer(LauncherWatchDrag, 0)
     SetTimer(LauncherWatchHover, 0), ToolTip()
     if IsObject(LauncherGui) {
-        if LauncherPinned
-            try WinGetPos(&x, &y, , , LauncherGui), LauncherPos := {x: x, y: y}
         try LauncherGui.Destroy()
         LauncherGui := 0
     }
 }
 
 ; 掴みしろ監視: バー領域内での左クリック押下を検知したら手動ドラッグループへ
+; （その場での見やすい位置への移動はできるが、次回起動時はCliborと同じく常にカーソル位置に開き直す）
 LauncherWatchDrag() {
-    global LauncherGui, LauncherDragBar, LauncherPinned
+    global LauncherGui, LauncherDragBar
     if !(IsObject(LauncherGui) && IsObject(LauncherDragBar) && GetKeyState("LButton", "P"))
         return
     MouseGetPos &mx, &my
@@ -1479,7 +1478,7 @@ LauncherWatchDrag() {
     LauncherGui.GetPos(&gx, &gy)
     if !(mx >= gx + bx && mx <= gx + bx + bw && my >= gy + by && my <= gy + by + bh)
         return
-    LauncherPinned := true, winX := gx, winY := gy, startMx := mx, startMy := my
+    winX := gx, winY := gy, startMx := mx, startMy := my
     while GetKeyState("LButton", "P") {
         if !IsObject(LauncherGui)   ; ドラッグ中にCloseLauncher()で破棄された場合(フォーカス喪失等)
             return
@@ -1538,13 +1537,10 @@ LauncherWatchHover() {
     }
 }
 
-; 右クリック: 掴みしろ=固定解除 / 履歴項目=メニュー（開く・昇格・削除）
+; 右クリック: 履歴項目=メニュー（開く・昇格・削除）
 LauncherContextMenu(g, ctrl, item, isRC, x, y) {
-    global LauncherDragBar, LauncherLvH, LauncherPos, LauncherPinned, ClipHistory, LauncherGui
-    if (ctrl = LauncherDragBar) {
-        LauncherPos := "", LauncherPinned := false
-        Flash("固定を解除しました（次回からカーソル位置に表示）")
-    } else if (ctrl = LauncherLvH) {
+    global LauncherLvH, ClipHistory, LauncherGui
+    if (ctrl = LauncherLvH) {
         idx := LauncherLVItemUnderMouse(LauncherLvH)
         if (idx < 1 || idx > ClipHistory.Length)
             return
