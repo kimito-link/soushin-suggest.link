@@ -503,6 +503,7 @@ ShowSnippetManager(*) {
     SnipMgrHistLV := SnipMgrGui.Add("ListView", "x10 y66 w580 h240 -Multi NoSort NoSortHdr +Grid",
         ["コピー日時", "本文"])
     SnipMgrHistLV.ModifyCol(1, 150), SnipMgrHistLV.ModifyCol(2, 400)
+    EnsureHistThumbIL()                       ; 画像履歴の実サムネイル表示用ImageList
     SnipMgrHistLV.OnEvent("ItemSelect", SnipMgrHistOnSelect)
     SnipMgrHistLV.OnEvent("DoubleClick", (lv, row) => SnipMgrHistCopy())
     SnipMgrGui.Add("Text", "x10 y316 w50 h20", "全文")
@@ -535,6 +536,7 @@ SnipMgrTabChanged(tab, *) {
 ; 総入れ替えの性能コストは無視できる(デバウンス等は不要)。
 SnipMgrHistRefresh() {
     global ClipHistory, SnipMgrHistLV, SnipMgrHistEd, SnipMgrHistRows, SnipMgrHistCount, SnipMgrHistPrev
+    RebuildHistThumbILIfBloated()
     q := Trim(SnipMgrHistEd.Value)
     SnipMgrHistRows := []
     SnipMgrHistLV.Delete()
@@ -543,7 +545,8 @@ SnipMgrHistRefresh() {
             continue
         SnipMgrHistRows.Push(v)                  ; インデックスでなく要素の参照を保持
         disp := StrReplace(StrReplace(v.text, "`r", ""), "`n", " ⏎ ")
-        SnipMgrHistLV.Add(, v.time, SubStr(disp, 1, 100))
+        opt := (v.type = "image") ? "Icon" . (HistThumbIndex(v) + 1) : "Icon0"  ; Icon0省略不可(全行に1番目が出る既知の仕様)
+        SnipMgrHistLV.Add(opt, v.time, SubStr(disp, 1, 100))
     }
     SnipMgrHistCount.Text := SnipMgrHistRows.Length . " 件"
         . (q != "" ? " （絞り込み中 / 全" . ClipHistory.Length . "件）" : "")
@@ -720,7 +723,7 @@ ShowLauncher() {
     gearBtn := LauncherGui.Add("Text", "x380 y0 w20 h16 BackgroundD4DCE8 cGray Center +0x100", "⚙")
     gearBtn.SetFont("s10")
     gearBtn.OnEvent("Click", ShowLauncherSettingsMenu)
-    LauncherGui.Add("Text", "x400 y2 w60 h12 cGray", "v1.6.0").SetFont("s8")   ; 掴みしろの右隣にバージョン表示
+    LauncherGui.Add("Text", "x400 y2 w60 h12 cGray", "v1.7.0").SetFont("s8")   ; 掴みしろの右隣にバージョン表示
     LauncherGui.SetFont("s12")
     LauncherTab := LauncherGui.Add("Tab3", "x0 y16 w460 -Wrap",
         ["履歴 " . ClipHistory.Length, "定型文 " . Snippets.Length])
@@ -924,6 +927,97 @@ PasteImage(dib) {
         WinActivate("ahk_id " . LauncherTarget)
     Sleep 150
     Send("^v")
+}
+
+; --- 画像履歴の実サムネイル表示（「定型文の管理」の履歴タブのみ。ランチャーのListBoxは非対応） ---
+; HBITMAPは生成関数のスコープ外に一切出さない: ImageList_Addは内部コピーなので、
+; Add直後にDeleteObjectしてよい。要素にHBITMAPを持たせて使い回すことはしない
+; （「ハンドルを持ち越さない」という画像履歴全体の設計思想を、表示層でも守るため）。
+global HistThumbIL := 0
+
+EnsureHistThumbIL() {
+    global HistThumbIL, SnipMgrHistLV
+    if HistThumbIL
+        return
+    HistThumbIL := DllCall("comctl32\ImageList_Create"
+        , "Int", 32, "Int", 32, "UInt", 0x20, "Int", 4, "Int", 4, "Ptr")  ; ILC_COLOR32
+    SnipMgrHistLV.SetImageList(HistThumbIL, 1)   ; 1=Small: レポート表示で使われるリスト
+}
+
+; 孤児アイコン(履歴から間引かれても残り続けるImageList内の画像)によるメモリ肥大を防ぐ。
+; 差し替え時はLVM_SETIMAGELISTが旧ILを破棄しないため明示的にImageList_Destroyする。
+RebuildHistThumbILIfBloated() {
+    global HistThumbIL, ClipHistory, SnipMgrHistLV
+    if (!HistThumbIL || DllCall("comctl32\ImageList_GetImageCount", "Ptr", HistThumbIL, "Int") <= 32)
+        return
+    old := HistThumbIL
+    HistThumbIL := 0
+    for v in ClipHistory
+        if (v.type = "image")
+            v.DeleteProp("thumbIdx")
+    EnsureHistThumbIL()
+    DllCall("comctl32\ImageList_Destroy", "Ptr", old)
+}
+
+; CF_DIB(BITMAPFILEHEADERなし)先頭からピクセルデータまでのオフセット。0=描画非対応(fail-closed)
+DibBitsOffset(dib) {
+    biSize  := NumGet(dib,  0, "UInt")    ; 40=INFOHEADER / 108=V4 / 124=V5
+    bitCnt  := NumGet(dib, 14, "UShort")  ; biBitCount
+    comp    := NumGet(dib, 16, "UInt")    ; biCompression
+    clrUsed := NumGet(dib, 32, "UInt")    ; biClrUsed
+    if (comp != 0 && comp != 3)           ; BI_RGB(0)/BI_BITFIELDS(3)以外(RLE/JPEG/PNG)は描かない
+        return 0
+    entries := (bitCnt <= 8) ? (clrUsed ? clrUsed : 1 << bitCnt) : clrUsed
+    masks := (comp = 3 && biSize = 40) ? 12 : 0   ; V4/V5ヘッダはマスクをヘッダ内に内包する
+    off := biSize + masks + entries * 4
+    return (off < dib.Size) ? off : 0
+}
+
+; 画像要素1件→ImageListへ追加し0始まりindexを返す。失敗は-1(プレースホルダー表示のまま)
+; 等倍HBITMAPを一度も作らず、CF_DIBバッファから32x32へ直接縮小描画する(StretchDIBits)。
+MakeHistThumb(v) {
+    global HistThumbIL
+    static TW := 32, TH := 32, SRCCOPY := 0x00CC0020, HALFTONE := 4, WHITE_BRUSH := 0
+    off := DibBitsOffset(v.dib)
+    if (!off || v.w < 1 || v.h < 1)
+        return -1
+    hdcS := DllCall("GetDC", "Ptr", 0, "Ptr")
+    hdcM := DllCall("CreateCompatibleDC", "Ptr", hdcS, "Ptr")
+    hBmp := DllCall("CreateCompatibleBitmap", "Ptr", hdcS, "Int", TW, "Int", TH, "Ptr")
+    idx := -1
+    if (hdcM && hBmp) {
+        hOld := DllCall("SelectObject", "Ptr", hdcM, "Ptr", hBmp, "Ptr")
+        rc := Buffer(16), NumPut("Int",0,rc,0), NumPut("Int",0,rc,4)
+        NumPut("Int",TW,rc,8), NumPut("Int",TH,rc,12)
+        DllCall("FillRect", "Ptr", hdcM, "Ptr", rc
+            , "Ptr", DllCall("GetStockObject", "Int", WHITE_BRUSH, "Ptr"))
+        scale := Min(TW / v.w, TH / v.h)               ; アスペクト比保持・中央寄せ
+        dw := Max(1, Round(v.w * scale)), dh := Max(1, Round(v.h * scale))
+        dx := (TW - dw) // 2, dy := (TH - dh) // 2
+        DllCall("SetStretchBltMode", "Ptr", hdcM, "Int", HALFTONE)
+        DllCall("SetBrushOrgEx", "Ptr", hdcM, "Int", 0, "Int", 0, "Ptr", 0)  ; HALFTONE後は必須(MSDN)
+        DllCall("StretchDIBits", "Ptr", hdcM
+            , "Int", dx, "Int", dy, "Int", dw, "Int", dh
+            , "Int", 0, "Int", 0, "Int", v.w, "Int", v.h
+            , "Ptr", v.dib.Ptr + off       ; pjBits: ヘッダ＋カラーテーブルの直後
+            , "Ptr", v.dib                 ; pbmi:   CF_DIBは先頭がそのままBITMAPINFO
+            , "UInt", 0                    ; DIB_RGB_COLORS
+            , "UInt", SRCCOPY)
+        DllCall("SelectObject", "Ptr", hdcM, "Ptr", hOld, "Ptr")  ; Add前に必ずDCから外す
+        idx := DllCall("comctl32\ImageList_Add", "Ptr", HistThumbIL, "Ptr", hBmp, "Ptr", 0, "Int")
+    }
+    if hBmp
+        DllCall("DeleteObject", "Ptr", hBmp)   ; ImageList_Addは内部コピーなので即破棄で安全
+    if hdcM
+        DllCall("DeleteDC", "Ptr", hdcM)
+    DllCall("ReleaseDC", "Ptr", 0, "Ptr", hdcS)
+    return idx
+}
+
+HistThumbIndex(v) {                        ; 生成は要素につき1回。以後はキャッシュ
+    if !v.HasOwnProp("thumbIdx")
+        v.thumbIdx := MakeHistThumb(v)
+    return v.thumbIdx
 }
 
 ; クリップボードを開かずに判定できるためコールバック内でも安全
@@ -1170,7 +1264,7 @@ A_TrayMenu.Add("定型文ファイルを編集 (snippets.ini)", EditSnippetsFile
 A_TrayMenu.Add("定型文の管理...", ShowSnippetManager)
 A_TrayMenu.Add("設定フォルダを開く", (*) => Run('explorer.exe "' . A_ScriptDir . '"'))
 A_TrayMenu.Add()  ; セパレータ
-A_TrayMenu.Add("v1.6.0", (*) => 0), A_TrayMenu.Disable("v1.6.0")
+A_TrayMenu.Add("v1.7.0", (*) => 0), A_TrayMenu.Disable("v1.7.0")
 A_TrayMenu.Add()  ; セパレータ
 
 ; 初回起動時（スタートアップ未登録かつ確認未表示）は自動実行を促す
