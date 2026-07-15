@@ -29,6 +29,7 @@ global LastCaptureText := "", LastCaptureTick := 0   ; 自動クリア検知用
 global ClipUserWindowMs := 1000           ; ユーザー操作限定フィルタの窓(iniに出さない・固定)
 global ClipAutoClearSec := 45, ClipMaxLen := 100000
 global ClipExcludeExes := Map("keepass.exe",1, "keepassxc.exe",1, "1password.exe",1, "bitwarden.exe",1)
+global ClipImageMax := 5, ClipImageMaxBytes := 36 * 1024 * 1024   ; 画像専用の件数上限・4Kスクショ程度まで許容
 
 Flash(msg, ms := 1500) {
     ToolTip(msg)
@@ -38,7 +39,7 @@ Flash(msg, ms := 1500) {
 ; --- load sites.ini (per-app rules + [sites] title-keyword rules) ---
 ; IniReadは使わない: 非ASCIIキーをUTF-16 LE以外で誤読する既知の問題があり、[sites]は日本語キーワードを扱うため
 LoadSitesConfig() {
-    global SitesConfig, SiteRules, LongPressSec, ClipWatchOn, ClipHistoryMax, ClipAutoClearSec, ClipExcludeExes
+    global SitesConfig, SiteRules, LongPressSec, ClipWatchOn, ClipHistoryMax, ClipAutoClearSec, ClipExcludeExes, ClipImageMax, ClipImageMaxBytes
     SitesConfig := Map()
     SiteRules := []
     iniPath := A_ScriptDir . "\sites.ini"
@@ -79,6 +80,10 @@ LoadSitesConfig() {
                 ClipHistoryMax := Integer(val)
             else if (k = "autoclear" && IsNumber(val))
                 ClipAutoClearSec := val + 0
+            else if (k = "imagemax" && IsNumber(val))
+                ClipImageMax := Integer(val)
+            else if (k = "imagemaxmb" && IsNumber(val))
+                ClipImageMaxBytes := Integer(val) * 1024 * 1024
             else if (k = "exclude")
                 for e in StrSplit(val, ",")
                     if (Trim(e) != "")
@@ -190,11 +195,11 @@ ActivateGitBash() {
 PushClipHistory(text) {
     global ClipHistory, ClipHistoryMax
     for i, v in ClipHistory
-        if (v.text = text) {
+        if (v.type = "text" && v.text = text) {   ; 画像のプレースホルダー文字列と偶然一致しても誤爆しない
             ClipHistory.RemoveAt(i)   ; 重複は先頭へ昇格（時刻も更新される）
             break
         }
-    ClipHistory.InsertAt(1, {text: text, time: NowWithWeekday()})
+    ClipHistory.InsertAt(1, {type: "text", text: text, time: NowWithWeekday()})
     while (ClipHistory.Length > ClipHistoryMax)
         ClipHistory.Pop()
 }
@@ -242,13 +247,21 @@ MButton::ActivateGitBash()
 
 ; --- サイドボタン(戻る): 短押し=スクショ / 長押し=クイックペースト（全アプリ） ---
 XButton1:: {
-    global LongPressSec
+    global LongPressSec, LastUserCopyTick
     if KeyWait("XButton1", "T" . LongPressSec) {
+        LastUserCopyTick := A_TickCount        ; 自スクリプト発のSendはフックに乗らないため明示記録
         Send("#{PrintScreen}")
         return
     }
     KeyWait("XButton1")
     ShowLauncher()
+}
+
+; PrintScreen(全画面/Alt+PrintScreenでアクティブウィンドウ)によるコピーもユーザー操作として認める
+~PrintScreen::
+~!PrintScreen:: {
+    global LastUserCopyTick
+    LastUserCopyTick := A_TickCount
 }
 
 ; --- snippets.ini: ラベル=本文（\n で改行、run:パス で起動）---
@@ -544,7 +557,9 @@ SnipMgrHistOnSelect(lv, row, selected) {
     if (!selected || row < 1 || row > SnipMgrHistRows.Length)
         return
     v := SnipMgrHistRows[row]
-    SnipMgrHistPrev.Value := StrReplace(v.text, "`n", "`r`n")   ; Editの改行はCRLF
+    SnipMgrHistPrev.Value := (v.type = "image")
+        ? "画像 " . v.w . "×" . v.h . " — ダブルクリックまたはボタンで再コピーできます"
+        : StrReplace(v.text, "`n", "`r`n")   ; Editの改行はCRLF
 }
 
 ; コピー操作はクリップボード監視経由でPushClipHistoryを発火させ、その要素が
@@ -556,7 +571,15 @@ SnipMgrHistCopy(*) {
         SetCsvStatus("コピーする履歴を選択してください")
         return
     }
-    A_Clipboard := SnipMgrHistRows[row].text
+    v := SnipMgrHistRows[row]
+    if (v.type = "image") {
+        if SetClipboardImage(v.dib)
+            SetCsvStatus("クリップボードへコピーしました")
+        else
+            SetCsvStatus("画像を再設定できませんでした")
+        return
+    }
+    A_Clipboard := v.text
     SetCsvStatus("クリップボードへコピーしました")
 }
 
@@ -697,7 +720,7 @@ ShowLauncher() {
     gearBtn := LauncherGui.Add("Text", "x380 y0 w20 h16 BackgroundD4DCE8 cGray Center +0x100", "⚙")
     gearBtn.SetFont("s10")
     gearBtn.OnEvent("Click", ShowLauncherSettingsMenu)
-    LauncherGui.Add("Text", "x400 y2 w60 h12 cGray", "v1.5.0").SetFont("s8")   ; 掴みしろの右隣にバージョン表示
+    LauncherGui.Add("Text", "x400 y2 w60 h12 cGray", "v1.6.0").SetFont("s8")   ; 掴みしろの右隣にバージョン表示
     LauncherGui.SetFont("s12")
     LauncherTab := LauncherGui.Add("Tab3", "x0 y16 w460 -Wrap",
         ["履歴 " . ClipHistory.Length, "定型文 " . Snippets.Length])
@@ -738,9 +761,9 @@ PasteHistoryAt(idx) {
     global ClipHistory
     if (idx < 1 || idx > ClipHistory.Length)
         return
-    text := ClipHistory[idx].text
+    v := ClipHistory[idx]
     CloseLauncher()
-    PasteText(text)
+    (v.type = "image") ? PasteImage(v.dib) : PasteText(v.text)
 }
 
 UseSnippetAt(idx) {
@@ -773,17 +796,20 @@ PasteText(text) {
 ; RDP/VM同期で載らないのは仕様（ローカルのキー・マウス操作を伴わないためフィルタで弾く）
 ClipChanged(type) {
     global ClipWatchOn, SelfClipTick
-    if (A_TickCount - SelfClipTick < 500)     ; PasteText等の自己書き込み
+    if (A_TickCount - SelfClipTick < 500)     ; PasteText/SetClipboardImage等の自己書き込み
         return
     if (type = 0) {                           ; クリア → 自動クリア検知
         MaybeDropAutoCleared()
         return
     }
-    if (type != 1 || !ClipWatchOn)            ; 非テキスト・一時停止中
+    if (!ClipWatchOn)
         return
-    if ClipHasIgnoreFormat()                  ; パスワードマネージャの標準除外フォーマット
+    if ClipHasIgnoreFormat()                  ; パスワードマネージャの標準除外フォーマット(テキスト/画像共通)
         return
-    SetTimer(CaptureClip, -120)               ; 多重発火デバウンス(最後の発火から120ms後に1回)
+    if (type = 1)
+        SetTimer(CaptureClip, -120)           ; 多重発火デバウンス(最後の発火から120ms後に1回)
+    else if (type = 2 && DllCall("IsClipboardFormatAvailable", "UInt", 8))  ; CF_DIB=8
+        SetTimer(CaptureClipImage, -120)
 }
 
 CaptureClip() {
@@ -801,6 +827,103 @@ CaptureClip() {
         return
     LastCaptureText := text, LastCaptureTick := now
     PushClipHistory(text)
+}
+
+; --- クリップボード画像履歴 ---
+; ハンドル(HBITMAP/HGLOBAL)は履歴に持ち越さない: GetClipboardDataの戻りはクリップボード側の
+; 所有物で、他プロセスのEmptyClipboardで無効化されうる。開いている間にBufferへ即コピーする
+; ことで、一時ファイルなしでもハンドル寿命問題を回避する(GDIハンドルを保持しないためDeleteObject
+; の帳簿管理も不要になる)。
+
+ClipOpen() {
+    Loop 5 {                                  ; 他プロセスが握っていると失敗するためリトライ
+        if DllCall("OpenClipboard", "Ptr", A_ScriptHwnd)
+            return true
+        Sleep 20
+    }
+    return false                              ; 諦め=捕捉しないだけ(fail-closed)
+}
+
+GetClipDib() {
+    if !ClipOpen()
+        return 0
+    buf := 0
+    try {
+        hDib := DllCall("GetClipboardData", "UInt", 8, "Ptr")   ; CF_DIB
+        if hDib {
+            p := DllCall("GlobalLock", "Ptr", hDib, "Ptr")
+            if p {
+                sz := DllCall("GlobalSize", "Ptr", hDib, "UPtr")
+                buf := Buffer(sz)
+                DllCall("RtlMoveMemory", "Ptr", buf, "Ptr", p, "UPtr", sz)
+                DllCall("GlobalUnlock", "Ptr", hDib)
+            }
+        }
+    } finally DllCall("CloseClipboard")       ; 例外でも必ず閉じる(閉じ忘れはOS全体のコピペを止める)
+    return buf
+}
+
+CaptureClipImage() {
+    global LastUserCopyTick, LastLButtonUpTick, ClipUserWindowMs, ClipImageMaxBytes
+    now := A_TickCount
+    if (now - LastUserCopyTick > ClipUserWindowMs) && (now - LastLButtonUpTick > ClipUserWindowMs)
+        return
+    if ClipSourceExcluded()
+        return
+    dib := GetClipDib()
+    if (!dib || dib.Size < 40 || dib.Size > ClipImageMaxBytes)   ; 40=BITMAPINFOHEADER最小
+        return
+    w := NumGet(dib, 4, "Int"), h := Abs(NumGet(dib, 8, "Int"))  ; biWidth/biHeight(トップダウンは負)
+    PushClipImage(dib, w, h)
+}
+
+PushClipImage(dib, w, h) {
+    global ClipHistory, ClipHistoryMax, ClipImageMax
+    label := "📷 画像 " . w . "×" . h . " (" . Round(dib.Size / 1048576, 1) . "MB)"
+    ClipHistory.InsertAt(1, {type: "image", text: label, dib: dib, w: w, h: h, time: NowWithWeekday()})
+    n := 0
+    for i, v in ClipHistory                   ; 画像専用上限: 古い画像から間引く
+        if (v.type = "image" && ++n > ClipImageMax) {
+            ClipHistory.RemoveAt(i)           ; RemoveAtでBufferの参照が切れ自動解放される
+            break                             ; 1回の追加で超過は最大1件
+        }
+    while (ClipHistory.Length > ClipHistoryMax)
+        ClipHistory.Pop()
+}
+
+SetClipboardImage(dib) {
+    global SelfClipTick
+    hMem := DllCall("GlobalAlloc", "UInt", 0x2, "UPtr", dib.Size, "Ptr")  ; GMEM_MOVEABLE
+    if !hMem
+        return false
+    p := DllCall("GlobalLock", "Ptr", hMem, "Ptr")
+    DllCall("RtlMoveMemory", "Ptr", p, "Ptr", dib, "UPtr", dib.Size)
+    DllCall("GlobalUnlock", "Ptr", hMem)
+    if !ClipOpen() {
+        DllCall("GlobalFree", "Ptr", hMem)    ; 開けなかったら自分で解放
+        return false
+    }
+    ok := false
+    try {
+        SelfClipTick := A_TickCount           ; EmptyClipboardのtype=0通知より前に立てる(自己書込フィルタ)
+        DllCall("EmptyClipboard")
+        ok := DllCall("SetClipboardData", "UInt", 8, "Ptr", hMem, "Ptr") != 0
+    } finally DllCall("CloseClipboard")
+    if !ok
+        DllCall("GlobalFree", "Ptr", hMem)    ; 成功時は所有権がOSに移るため触らない(触ると二重解放)
+    return ok
+}
+
+PasteImage(dib) {
+    global LauncherTarget
+    if !SetClipboardImage(dib) {
+        Flash("画像を再設定できませんでした", 1500)
+        return
+    }
+    if (LauncherTarget && WinExist("ahk_id " . LauncherTarget))
+        WinActivate("ahk_id " . LauncherTarget)
+    Sleep 150
+    Send("^v")
 }
 
 ; クリップボードを開かずに判定できるためコールバック内でも安全
@@ -830,7 +953,7 @@ MaybeDropAutoCleared() {
     if (LastCaptureText = "" || A_TickCount - LastCaptureTick > ClipAutoClearSec * 1000)
         return
     for i, v in ClipHistory
-        if (v.text = LastCaptureText) {
+        if (v.type = "text" && v.text = LastCaptureText) {   ; 画像のプレースホルダーと誤爆させない
             ClipHistory.RemoveAt(i)
             Flash("自動クリアを検知したため履歴からも削除しました", 1500)
             break
@@ -919,9 +1042,11 @@ LauncherContextMenu(g, ctrl, item, isRC, x, y) {
             return
         SetTimer(CheckLauncherFocus, 0)       ; メニュー表示中の誤クローズ防止(必須)
         m := Menu()
-        if (p := RunnablePathFrom(ClipHistory[idx].text))
-            m.Add(InStr(FileExist(p), "D") ? "このフォルダを開く" : "このファイルを開く", (*) => OpenHistoryPath(p))
-        m.Add("定型文に登録", (*) => PromoteHistoryAt(idx))
+        if (ClipHistory[idx].type = "text") {
+            if (p := RunnablePathFrom(ClipHistory[idx].text))
+                m.Add(InStr(FileExist(p), "D") ? "このフォルダを開く" : "このファイルを開く", (*) => OpenHistoryPath(p))
+            m.Add("定型文に登録", (*) => PromoteHistoryAt(idx))   ; 画像はsnippets.ini非対応のため出さない
+        }
         m.Add("この履歴を削除", (*) => DeleteHistoryAt(idx))
         m.Add("履歴を全削除", (*) => DeleteHistoryAll())
         m.Show()
@@ -999,8 +1124,8 @@ HistoryListItems() {
 ; 履歴→定型文昇格。IniWriteは使わず、UTF-8明示のFileAppendで追記する
 PromoteHistoryAt(idx) {
     global ClipHistory
-    if (idx < 1 || idx > ClipHistory.Length)
-        return
+    if (idx < 1 || idx > ClipHistory.Length || ClipHistory[idx].type != "text")
+        return                                 ; 画像はsnippets.ini非対応(メニュー非表示と二重の防御)
     text := ClipHistory[idx].text
     CloseLauncher()
     ib := InputBox("この内容を定型文に登録します。名前を入力:", "定型文に昇格", "w380 h120", SubStr(RegExReplace(text, "\s+", " "), 1, 12))
@@ -1045,7 +1170,7 @@ A_TrayMenu.Add("定型文ファイルを編集 (snippets.ini)", EditSnippetsFile
 A_TrayMenu.Add("定型文の管理...", ShowSnippetManager)
 A_TrayMenu.Add("設定フォルダを開く", (*) => Run('explorer.exe "' . A_ScriptDir . '"'))
 A_TrayMenu.Add()  ; セパレータ
-A_TrayMenu.Add("v1.5.0", (*) => 0), A_TrayMenu.Disable("v1.5.0")
+A_TrayMenu.Add("v1.6.0", (*) => 0), A_TrayMenu.Disable("v1.6.0")
 A_TrayMenu.Add()  ; セパレータ
 
 ; 初回起動時（スタートアップ未登録かつ確認未表示）は自動実行を促す
