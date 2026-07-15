@@ -22,6 +22,11 @@ $ErrorActionPreference = 'Stop'
 $repo   = Split-Path $PSScriptRoot -Parent
 $src    = Join-Path $repo 'dist\soushin-suggest.ahk'
 $icon   = Join-Path $repo 'assets\soushin-suggest.ico'
+$logo   = Join-Path $repo 'assets\kimitolink-mark.png'
+$logo14 = Join-Path $repo 'assets\kimitolink-mark-14.png'
+$logoFull = Join-Path $repo 'assets\kimitolink-full-logo.png'
+$logo18 = Join-Path $repo 'assets\kimitolink-mark-18.png'
+$logoFull64 = Join-Path $repo 'assets\kimitolink-full-logo-64.png'
 $distIni = Join-Path $repo 'dist\sites.ini'
 $distSnippets = Join-Path $repo 'dist\snippets.ini'
 $distReadme = Join-Path $repo 'dist\README.txt'
@@ -34,11 +39,36 @@ if (-not (Test-Path $icon)) {
     Write-Error "Icon not found: $icon (run scripts\make-icon.ps1 first)"
     exit 1
 }
+if (-not (Test-Path $logo)) {
+    Write-Error "Logo not found: $logo"
+    exit 1
+}
+if (-not (Test-Path $logo14)) {
+    Write-Error "Logo (14px) not found: $logo14"
+    exit 1
+}
+if (-not (Test-Path $logoFull)) {
+    Write-Error "Full logo not found: $logoFull"
+    exit 1
+}
+if (-not (Test-Path $logo18)) {
+    Write-Error "Logo (18px) not found: $logo18"
+    exit 1
+}
+if (-not (Test-Path $logoFull64)) {
+    Write-Error "Full logo (64px) not found: $logoFull64"
+    exit 1
+}
 
 $stage = Join-Path $env:TEMP ('ss-build-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Path $stage | Out-Null
 Copy-Item $src (Join-Path $stage 'soushin-suggest.ahk')
 Copy-Item $icon (Join-Path $stage 'soushin-suggest.ico')
+Copy-Item $logo (Join-Path $stage 'kimitolink-mark.png')
+Copy-Item $logo14 (Join-Path $stage 'kimitolink-mark-14.png')
+Copy-Item $logoFull (Join-Path $stage 'kimitolink-full-logo.png')
+Copy-Item $logo18 (Join-Path $stage 'kimitolink-mark-18.png')
+Copy-Item $logoFull64 (Join-Path $stage 'kimitolink-full-logo-64.png')
 
 $ahk2exe = 'C:\Program Files\AutoHotkey\Compiler\Ahk2Exe.exe'
 $base    = 'C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe'
@@ -73,13 +103,29 @@ if ($p.ExitCode -ne 0 -or -not (Test-Path $outExe)) {
 Copy-Item $outExe (Join-Path $repo 'dist\soushin-suggest.exe') -Force
 Write-Output ("Compiled: dist\soushin-suggest.exe (" + (Get-Item (Join-Path $repo 'dist\soushin-suggest.exe')).Length + " bytes)")
 
+$distLogo = Join-Path $repo 'dist\kimitolink-mark.png'
+$distLogo14 = Join-Path $repo 'dist\kimitolink-mark-14.png'
+$distLogoFull = Join-Path $repo 'dist\kimitolink-full-logo.png'
+$distLogo18 = Join-Path $repo 'dist\kimitolink-mark-18.png'
+$distLogoFull64 = Join-Path $repo 'dist\kimitolink-full-logo-64.png'
+Copy-Item $logo $distLogo -Force
+Copy-Item $logo14 $distLogo14 -Force
+Copy-Item $logoFull $distLogoFull -Force
+Copy-Item $logo18 $distLogo18 -Force
+Copy-Item $logoFull64 $distLogoFull64 -Force
+
 $zip = Join-Path $repo ("dist\soushin-suggest-v" + $Version + ".zip")
 if (Test-Path $zip) { Remove-Item $zip }
 
 $zipPaths = @(
     (Join-Path $repo 'dist\soushin-suggest.exe'),
     $distIni,
-    $distReadme
+    $distReadme,
+    $distLogo,
+    $distLogo14,
+    $distLogoFull,
+    $distLogo18,
+    $distLogoFull64
 )
 if (Test-Path $distSnippets) {
     $zipPaths += $distSnippets

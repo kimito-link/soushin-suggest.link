@@ -412,37 +412,11 @@ ImportSnippets(clearFirst := false, dlg := false) {
     }
 }
 
-; --- 定型文CSV出力/取込ダイアログ（Clibor同等の一画面UI） ---
-global CsvDlgGui := 0, CsvDlgStatus := 0, CsvDlgClearChk := 0
-
+; SetCsvStatus: 定型文管理ウィンドウのステータス行に書く（CSV出力/取込の結果表示先）
 SetCsvStatus(msg) {
-    global CsvDlgStatus
-    if CsvDlgStatus
-        CsvDlgStatus.Text := msg
-}
-
-ShowCsvDialog(*) {
-    global CsvDlgGui, CsvDlgStatus, CsvDlgClearChk
-    if CsvDlgGui {
-        CsvDlgGui.Show()
-        return
-    }
-    CsvDlgGui := Gui("+ToolWindow", "定型文CSV出力/取込")
-    CsvDlgGui.SetFont("s9")
-    CsvDlgGui.Add("GroupBox", "x10 y10 w300 h60", "CSV出力")
-    CsvDlgGui.Add("Text", "x20 y32 w180", "すべての定型文をCSVに書き出します")
-    CsvDlgGui.Add("Button", "x220 y28 w80 h24", "出力(E)").OnEvent("Click", (*) => ExportSnippetsCsv(true))
-
-    CsvDlgGui.Add("GroupBox", "x10 y80 w300 h90", "CSV取込")
-    CsvDlgClearChk := CsvDlgGui.Add("CheckBox", "x20 y102 w280", "定型文を全てクリア後に取り込む")
-    CsvDlgGui.Add("Text", "x20 y126 w180", "ini/txt/csv 形式に対応")
-    CsvDlgGui.Add("Button", "x220 y122 w80 h24", "取込(I)").OnEvent("Click", (*) =>
-        ImportSnippets(CsvDlgClearChk.Value, true))
-
-    CsvDlgStatus := CsvDlgGui.Add("Text", "x10 y182 w300 h20 cGray", "")
-    CsvDlgGui.Add("Button", "x230 y182 w80 h24", "OK(O)").OnEvent("Click", (*) => CsvDlgGui.Hide())
-    CsvDlgGui.OnEvent("Close", (*) => CsvDlgGui.Hide())
-    CsvDlgGui.Show("w320 h215")
+    global SnipMgrStatus
+    if SnipMgrStatus
+        SnipMgrStatus.Text := msg
 }
 
 ; ランチャー右上の歯車から開く設定メニュー。トレイメニューと同じ項目を抜粋して束ねる。
@@ -453,13 +427,259 @@ ShowLauncherSettingsMenu(*) {
     m.Add("クリップボード監視を一時停止", ToggleClipWatch)
     m.Add("クリップボード履歴を全削除", DeleteHistoryAll)
     m.Add("定型文ファイルを編集 (snippets.ini)", EditSnippetsFile)
-    m.Add("定型文CSV出力/取込...", ShowCsvDialog)
+    m.Add("定型文の管理...", ShowSnippetManager)
     m.Add("設定フォルダを開く", (*) => Run('explorer.exe "' . A_ScriptDir . '"'))
     if !ClipWatchOn
         m.Check("クリップボード監視を一時停止")
     m.Show()
     if IsObject(LauncherGui)
         SetTimer(CheckLauncherFocus, 150)
+}
+
+; --- 定型文の管理ウィンドウ（一覧＋編集フォーム＋CSV出力/取込を1画面に統合） ---
+; snippets.iniは「1定型文=1行」の不変条件を持つため、保存/削除は行番号ベースの
+; 行単位書き換えで行う（全文書き直しはコメント行消失・重複ラベル誤爆のリスクがあり不採用）。
+global SnipMgrGui := 0, SnipMgrLV := 0, SnipMgrLabelEd := 0, SnipMgrBodyEd := 0
+global SnipMgrStatus := 0, SnipMgrItems := [], SnipMgrClearChk := 0
+global SnipMgrTab := 0, SnipMgrHistLV := 0, SnipMgrHistEd := 0, SnipMgrHistPrev := 0
+global SnipMgrHistCount := 0, SnipMgrHistRows := []
+
+ShowSnippetManager(*) {
+    global SnipMgrGui, SnipMgrLV, SnipMgrLabelEd, SnipMgrBodyEd, SnipMgrStatus, SnipMgrClearChk
+    global SnipMgrTab, SnipMgrHistLV, SnipMgrHistEd, SnipMgrHistPrev, SnipMgrHistCount
+    if SnipMgrGui {
+        SnipMgrRefresh()               ; 外部編集(メモ帳/取込)を拾うため再表示時は必ず再読込
+        SnipMgrHistRefresh()
+        SnipMgrGui.Show()
+        return
+    }
+    SnipMgrGui := Gui("+ToolWindow", "定型文の管理")
+    SnipMgrGui.SetFont("s9", "Meiryo UI")
+    SnipMgrTab := SnipMgrGui.Add("Tab3", "x0 y0 w600 h496 -Wrap", ["定型文", "履歴"])
+    SnipMgrTab.OnEvent("Change", SnipMgrTabChanged)
+
+    SnipMgrTab.UseTab(1)
+    ; NoSort NoSortHdr が必須: ソートを許すと行番号↔SnipMgrItemsの対応が壊れ、
+    ; 別の定型文を上書き・削除する事故につながる（この設定を外さないこと）
+    SnipMgrLV := SnipMgrGui.Add("ListView", "x10 y36 w580 h250 -Multi NoSort NoSortHdr +Grid",
+        ["ラベル", "本文"])
+    SnipMgrLV.ModifyCol(1, 150), SnipMgrLV.ModifyCol(2, 400)
+    SnipMgrLV.OnEvent("ItemSelect", SnipMgrOnSelect)
+
+    SnipMgrGui.Add("Text", "x10 y300 w50 h20", "ラベル")
+    SnipMgrLabelEd := SnipMgrGui.Add("Edit", "x64 y296 w300 h24")
+    SnipMgrGui.Add("Text", "x10 y330 w50 h20", "本文")
+    ; +WantReturn: 既定ボタンにEnterを食われず本文中に改行を打てるようにする
+    SnipMgrBodyEd := SnipMgrGui.Add("Edit", "x64 y326 w526 h96 +Multi +WantReturn +VScroll")
+
+    SnipMgrGui.Add("Button", "x64 y432 w100 h28", "新規追加").OnEvent("Click", SnipMgrAdd)
+    SnipMgrGui.Add("Button", "x172 y432 w100 h28", "上書き保存").OnEvent("Click", SnipMgrSave)
+    SnipMgrGui.Add("Button", "x280 y432 w80 h28", "削除").OnEvent("Click", SnipMgrDelete)
+    SnipMgrGui.Add("Button", "x430 y432 w76 h28", "CSV出力").OnEvent("Click", (*) => ExportSnippetsCsv(true))
+    SnipMgrGui.Add("Button", "x510 y432 w80 h28", "CSV取込").OnEvent("Click", SnipMgrImport)
+    SnipMgrClearChk := SnipMgrGui.Add("CheckBox", "x430 y464 w160 h20", "全クリアして取込")
+
+    ; --- 履歴タブ: 非永続のClipHistoryを検索・参照するだけのビュー(ペースト機能は持たせない) ---
+    SnipMgrTab.UseTab(2)
+    SnipMgrGui.Add("Text", "x10 y40 w40 h20", "検索")
+    SnipMgrHistEd := SnipMgrGui.Add("Edit", "x54 y36 w280 h24")
+    SnipMgrHistEd.OnEvent("Change", (*) => SnipMgrHistRefresh())
+    SnipMgrHistCount := SnipMgrGui.Add("Text", "x344 y40 w246 h20 cGray", "")
+    ; 履歴LVにもNoSort NoSortHdrを付ける: ソートされると行↔SnipMgrHistRows対応が崩れ、
+    ; 選んだのと違う行がコピーされる事故になる（定型文タブと同じ理由）
+    SnipMgrHistLV := SnipMgrGui.Add("ListView", "x10 y66 w580 h240 -Multi NoSort NoSortHdr +Grid",
+        ["コピー日時", "本文"])
+    SnipMgrHistLV.ModifyCol(1, 150), SnipMgrHistLV.ModifyCol(2, 400)
+    SnipMgrHistLV.OnEvent("ItemSelect", SnipMgrHistOnSelect)
+    SnipMgrHistLV.OnEvent("DoubleClick", (lv, row) => SnipMgrHistCopy())
+    SnipMgrGui.Add("Text", "x10 y316 w50 h20", "全文")
+    SnipMgrHistPrev := SnipMgrGui.Add("Edit", "x64 y312 w526 h108 +ReadOnly +Multi +VScroll")
+    SnipMgrGui.Add("Button", "x64 y428 w170 h28", "クリップボードへコピー").OnEvent("Click", SnipMgrHistCopy)
+    SnipMgrGui.Add("Text", "x244 y434 w340 h20 cGray",
+        "履歴は最大" . ClipHistoryMax . "件・このPC内のみ・保存されません")
+
+    SnipMgrTab.UseTab()   ; 必須: 以降のステータス行を両タブ共通にする
+    ; ブランドロゴ: タブより後に追加してz-orderを前面にし、タブ行の右端に重ねて表示。
+    ; 読み込み失敗(ファイル欠落等)は機能に影響しないよう握りつぶす
+    try SnipMgrGui.Add("Picture", "x566 y2 w22 h22", A_ScriptDir . "\kimitolink-mark.png")
+    SnipMgrStatus := SnipMgrGui.Add("Text", "x10 y500 w400 h20 cGray", "")
+    ; フッター: フルロゴを右下に控えめに配置。読み込み失敗は握りつぶす(G-3と同じ流儀)
+    try SnipMgrGui.Add("Picture", "x522 y528 w58 h36", A_ScriptDir . "\kimitolink-full-logo.png")
+
+    SnipMgrGui.OnEvent("Close", (*) => SnipMgrGui.Hide())
+    SnipMgrGui.OnEvent("Escape", (*) => SnipMgrGui.Hide())
+    SnipMgrRefresh()
+    SnipMgrHistRefresh()
+    SnipMgrGui.Show("w600 h572")
+}
+
+SnipMgrTabChanged(tab, *) {
+    if (tab.Value = 2)
+        SnipMgrHistRefresh()
+}
+
+; ClipHistoryを検索語でフィルタし総入れ替え。最大30件(ClipHistoryMax)なので
+; 総入れ替えの性能コストは無視できる(デバウンス等は不要)。
+SnipMgrHistRefresh() {
+    global ClipHistory, SnipMgrHistLV, SnipMgrHistEd, SnipMgrHistRows, SnipMgrHistCount, SnipMgrHistPrev
+    q := Trim(SnipMgrHistEd.Value)
+    SnipMgrHistRows := []
+    SnipMgrHistLV.Delete()
+    for v in ClipHistory {                       ; 配列は常に新しい順（PushClipHistoryが先頭挿入）
+        if (q != "" && !InStr(v.text, q, false) && !InStr(v.time, q, false))
+            continue
+        SnipMgrHistRows.Push(v)                  ; インデックスでなく要素の参照を保持
+        disp := StrReplace(StrReplace(v.text, "`r", ""), "`n", " ⏎ ")
+        SnipMgrHistLV.Add(, v.time, SubStr(disp, 1, 100))
+    }
+    SnipMgrHistCount.Text := SnipMgrHistRows.Length . " 件"
+        . (q != "" ? " （絞り込み中 / 全" . ClipHistory.Length . "件）" : "")
+    SnipMgrHistPrev.Value := ""
+}
+
+; ItemSelectは選択解除時もselected=falseで発火する。ここを無視すると
+; 選択解除のたびに直前の行の内容がプレビューに残り続ける不具合になる。
+SnipMgrHistOnSelect(lv, row, selected) {
+    global SnipMgrHistRows, SnipMgrHistPrev
+    if (!selected || row < 1 || row > SnipMgrHistRows.Length)
+        return
+    v := SnipMgrHistRows[row]
+    SnipMgrHistPrev.Value := StrReplace(v.text, "`n", "`r`n")   ; Editの改行はCRLF
+}
+
+; コピー操作はクリップボード監視経由でPushClipHistoryを発火させ、その要素が
+; 配列先頭へ移動しうる。SnipMgrHistRowsは要素の参照を保持しているためズレない。
+SnipMgrHistCopy(*) {
+    global SnipMgrHistLV, SnipMgrHistRows
+    row := SnipMgrHistLV.GetNext(0)
+    if (!row || row > SnipMgrHistRows.Length) {
+        SetCsvStatus("コピーする履歴を選択してください")
+        return
+    }
+    A_Clipboard := SnipMgrHistRows[row].text
+    SetCsvStatus("クリップボードへコピーしました")
+}
+
+; LoadSnippetsと同じ判定規則だが ini上の行番号を保持する(編集・削除の宛先に使う)
+; LoadSnippets本体は改造しない(ランチャー側の呼び出し複数箇所への波及を避けるため)
+SnipMgrReadItems() {
+    items := [], path := A_ScriptDir . "\snippets.ini"
+    if !FileExist(path)
+        return items
+    for n, raw in StrSplit(FileRead(path, "UTF-8"), "`n", "`r") {
+        line := Trim(raw)
+        if (line = "" || SubStr(line, 1, 1) = ";" || SubStr(line, 1, 1) = "[")
+            continue
+        eq := InStr(line, "=")
+        if !eq
+            continue
+        label := Trim(SubStr(line, 1, eq - 1)), val := Trim(SubStr(line, eq + 1))
+        if (label != "" && val != "")
+            items.Push({label: label, value: StrReplace(val, "\n", "`n"), lineNo: n})
+    }
+    return items
+}
+
+SnipMgrRefresh() {
+    global SnipMgrLV, SnipMgrItems, SnipMgrLabelEd, SnipMgrBodyEd
+    SnipMgrItems := SnipMgrReadItems()
+    SnipMgrLV.Delete()
+    for s in SnipMgrItems {
+        prev := RegExReplace(s.value, "\s+", " ")
+        SnipMgrLV.Add(, s.label, (SubStr(s.value, 1, 4) = "run:" ? "▶ " : "") . SubStr(prev, 1, 80))
+    }
+    SnipMgrLabelEd.Value := "", SnipMgrBodyEd.Value := ""
+}
+
+; ItemSelectは選択解除時もselected=falseで発火する。ここを無視すると
+; 選択解除のたびに直前の行の内容がフォームに残り続ける不具合になる。
+SnipMgrOnSelect(lv, row, selected) {
+    global SnipMgrItems, SnipMgrLabelEd, SnipMgrBodyEd
+    if (!selected || row < 1 || row > SnipMgrItems.Length)
+        return
+    SnipMgrLabelEd.Value := SnipMgrItems[row].label
+    SnipMgrBodyEd.Value := StrReplace(SnipMgrItems[row].value, "`n", "`r`n")   ; Editの改行はCRLF
+}
+
+; 行単位の書換え/削除。書換え前に宛先行のラベルを検証し、外部編集でズレていたら中止(fail-closed)。
+; これがメモ帳等での同時編集と競合して「別の定型文を壊す」事故を防ぐ唯一の防御。
+SnipMgrWriteLine(lineNo, expectLabel, newLine) {
+    path := A_ScriptDir . "\snippets.ini"
+    lines := StrSplit(FileRead(path, "UTF-8"), "`n", "`r")
+    if (lineNo > lines.Length || !RegExMatch(Trim(lines[lineNo]), "^\Q" . expectLabel . "\E\s*="))
+        return false
+    (newLine = "") ? lines.RemoveAt(lineNo) : lines[lineNo] := newLine
+    out := ""
+    for l in lines
+        out .= l . "`n"
+    FileDelete(path)
+    FileAppend(RTrim(out, "`n") . "`n", path, "UTF-8")
+    return true
+}
+
+; フォーム値の取り出し共通部: CRLF→LF正規化＋ラベル無害化(PromoteHistoryAtと同一規則)
+SnipMgrFormValues(&label, &body) {
+    global SnipMgrLabelEd, SnipMgrBodyEd
+    label := RegExReplace(Trim(SnipMgrLabelEd.Value), "[=\[\];]")
+    body := StrReplace(SnipMgrBodyEd.Value, "`r`n", "`n")
+    return (label != "" && body != "")
+}
+
+SnipMgrAdd(*) {
+    global SnipMgrItems
+    if !SnipMgrFormValues(&label, &body)
+        return SetCsvStatus("ラベルと本文を入力してください")
+    for s in SnipMgrItems
+        if (s.label = label)
+            return SetCsvStatus("同じラベルが既に存在します: " . label)
+    path := A_ScriptDir . "\snippets.ini"
+    try {
+        nl := (FileExist(path) && !RegExMatch(FileRead(path, "UTF-8"), "\R$")) ? "`n" : ""
+        FileAppend(nl . label . "=" . StrReplace(body, "`n", "\n") . "`n", path, "UTF-8")
+        SnipMgrRefresh()
+        SetCsvStatus("追加しました: " . label)
+    } catch as e {
+        SetCsvStatus("追加に失敗しました: " . e.Message)
+    }
+}
+
+SnipMgrSave(*) {
+    global SnipMgrLV, SnipMgrItems
+    row := SnipMgrLV.GetNext(0)
+    if (!row || row > SnipMgrItems.Length)
+        return SetCsvStatus("一覧から編集する行を選んでください")
+    if !SnipMgrFormValues(&label, &body)
+        return SetCsvStatus("ラベルと本文を入力してください")
+    item := SnipMgrItems[row]
+    newLine := label . "=" . StrReplace(body, "`n", "\n")
+    if SnipMgrWriteLine(item.lineNo, item.label, newLine) {
+        SnipMgrRefresh()
+        SetCsvStatus("保存しました: " . label)
+    } else {
+        SnipMgrRefresh()
+        SetCsvStatus("ファイルが外部で変更されていたため再読込しました。もう一度お試しください")
+    }
+}
+
+SnipMgrDelete(*) {
+    global SnipMgrLV, SnipMgrItems
+    row := SnipMgrLV.GetNext(0)
+    if (!row || row > SnipMgrItems.Length)
+        return SetCsvStatus("一覧から削除する行を選んでください")
+    item := SnipMgrItems[row]
+    if SnipMgrWriteLine(item.lineNo, item.label, "") {
+        SnipMgrRefresh()
+        SetCsvStatus("削除しました: " . item.label)
+    } else {
+        SnipMgrRefresh()
+        SetCsvStatus("ファイルが外部で変更されていたため再読込しました。もう一度お試しください")
+    }
+}
+
+SnipMgrImport(*) {
+    global SnipMgrClearChk
+    ImportSnippets(SnipMgrClearChk.Value, true)
+    SnipMgrRefresh()
 }
 
 ShowLauncher() {
@@ -477,7 +697,7 @@ ShowLauncher() {
     gearBtn := LauncherGui.Add("Text", "x380 y0 w20 h16 BackgroundD4DCE8 cGray Center +0x100", "⚙")
     gearBtn.SetFont("s10")
     gearBtn.OnEvent("Click", ShowLauncherSettingsMenu)
-    LauncherGui.Add("Text", "x400 y2 w60 h12 cGray", "v1.4.1").SetFont("s8")   ; 掴みしろの右隣にバージョン表示
+    LauncherGui.Add("Text", "x400 y2 w60 h12 cGray", "v1.5.0").SetFont("s8")   ; 掴みしろの右隣にバージョン表示
     LauncherGui.SetFont("s12")
     LauncherTab := LauncherGui.Add("Tab3", "x0 y16 w460 -Wrap",
         ["履歴 " . ClipHistory.Length, "定型文 " . Snippets.Length])
@@ -494,6 +714,16 @@ ShowLauncher() {
     LauncherTab.UseTab()
     if (ClipHistory.Length = 0)
         LauncherTab.Value := 2                        ; 履歴が空なら定型文タブで開く
+    ; ブランドロゴ: フッター(Tab3コントロールの下端に明示座標で追従)に中央揃えで控えめに表示。
+    ; リスト行数(rows)でTab3の下端が動くため、Tab3.GetPos()で実際の下端を取得してから置く。
+    ; 画像は102x64(2:1)。wのみ指定してhは-1でアスペクト比を保たせ、横伸びを防ぐ。
+    ; 読み込み失敗時は握りつぶし、ロゴが出ないだけでランチャーは通常通り使える。
+    LauncherTab.GetPos(&tabX, &tabY, &tabW, &tabH)
+    footerY := tabY + tabH + 6
+    logoW := 90, logoH := 45                      ; 102x64を90幅に縮小(比率維持: 90*64/102≈56だが余白確保のため45に収める)
+    try LauncherGui.Add("Picture", "x" . (tabX + (tabW - logoW) // 2) . " y" . footerY . " w" . logoW . " h-1",
+        A_ScriptDir . "\kimitolink-full-logo-64.png")
+    LauncherGui.Add("Text", "x0 y" . footerY . " w1 h40")   ; ロゴ行の高さをウィンドウ計算に含めるための透明スペーサ
     LauncherGui.OnEvent("Escape", (*) => CloseLauncher())
     LauncherGui.OnEvent("ContextMenu", LauncherContextMenu)
     MouseGetPos &mx, &my
@@ -812,10 +1042,10 @@ A_TrayMenu.Add(StartupMenuLabel, ToggleStartup)
 A_TrayMenu.Add("クリップボード監視を一時停止", ToggleClipWatch)
 A_TrayMenu.Add("クリップボード履歴を全削除", DeleteHistoryAll)
 A_TrayMenu.Add("定型文ファイルを編集 (snippets.ini)", EditSnippetsFile)
-A_TrayMenu.Add("定型文CSV出力/取込...", ShowCsvDialog)
+A_TrayMenu.Add("定型文の管理...", ShowSnippetManager)
 A_TrayMenu.Add("設定フォルダを開く", (*) => Run('explorer.exe "' . A_ScriptDir . '"'))
 A_TrayMenu.Add()  ; セパレータ
-A_TrayMenu.Add("v1.4.1", (*) => 0), A_TrayMenu.Disable("v1.4.1")
+A_TrayMenu.Add("v1.5.0", (*) => 0), A_TrayMenu.Disable("v1.5.0")
 A_TrayMenu.Add()  ; セパレータ
 
 ; 初回起動時（スタートアップ未登録かつ確認未表示）は自動実行を促す
