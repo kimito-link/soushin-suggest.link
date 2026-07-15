@@ -361,6 +361,76 @@ LoadSnippetsCsv(path) {
     return items
 }
 
+; CliborエクスポートCSV(4列, CP932, BOMなし)の判定＋変換。非該当ならfalseを返しLoadSnippetsCsvへフォールバック。
+; existing: 既存ラベル→本文 のMap（clearFirst時は空Mapを渡す）。冪等性(同一本文の再取込スキップ)判定に使う。
+; 詳細は_docs/CLIBOR-CSV-IMPORT-DESIGN.md参照
+TryLoadCliborCsv(path, existing) {
+    text := FileRead(path, "CP932")
+    rows := ParseCsv(text)
+    if !CliborHeaderOk(rows) {
+        ; UTF-8で書き出された変種の救済（BOM除去してもう一度だけ）
+        text := RegExReplace(FileRead(path, "UTF-8"), "^\x{FEFF}")
+        rows := ParseCsv(text)
+        if !CliborHeaderOk(rows)
+            return false
+    }
+
+    ; パス1: 非空グループの種類数を数える（2種類以上のときのみラベルにプレフィックスを付ける）
+    groups := Map()
+    for idx, row in rows
+        if (idx > 1 && row.Length >= 1 && Trim(row[1]) != "")
+            groups[Trim(row[1])] := 1
+    multi := groups.Count >= 2
+
+    ; パス2: 変換＋一意化＋冪等スキップ
+    items := [], seen := Map()            ; seen: この取込内で確定したラベル→本文
+    for idx, row in rows {
+        if (idx = 1 || row.Length < 2)
+            continue
+        body := StrReplace(row[2], "`r`n", "`n")   ; クォート内CRLF正規化
+        if (body = "")
+            continue
+        memo := row.Length >= 3 ? row[3] : ""
+        base := (multi && Trim(row[1]) != "" ? Trim(row[1]) . "/" : "")
+              . CliborLabelBase(memo, body)
+        label := base, n := 1
+        while (existing.Has(label) || seen.Has(label)) {
+            ; 同一本文なら真の重複 → スキップ（再取込の冪等性）
+            if ((existing.Has(label) && existing[label] = body)
+             || (seen.Has(label) && seen[label] = body)) {
+                label := ""
+                break
+            }
+            n++, label := base . " (" . n . ")"
+        }
+        if (label = "")
+            continue
+        seen[label] := body
+        items.Push({label: label, value: body})
+    }
+    return items
+}
+
+; Clibor形式CSVのヘッダ行判定(4列: 定型文グループ,定型文,メモ,ホットキー)。誤コードページ読みは日本語が化けて必ず不一致になる。
+CliborHeaderOk(rows) {
+    return rows.Length >= 2 && rows[1].Length >= 4
+        && Trim(rows[1][1]) = "定型文グループ" && Trim(rows[1][2]) = "定型文"
+        && Trim(rows[1][3]) = "メモ" && Trim(rows[1][4]) = "ホットキー"
+}
+
+; Cliborの1件分からラベル素材を生成(メモ優先、空なら本文先頭20文字)し、ini形式を壊す文字をサニタイズする
+CliborLabelBase(memo, body) {
+    s := Trim(memo)
+    if (s = "") {
+        s := Trim(StrSplit(body, "`n", "`r")[1])   ; 本文の1行目
+        s := SubStr(s, 1, 20)
+    }
+    s := StrReplace(s, "=", " ")          ; ini区切りの破壊防止
+    s := RegExReplace(s, "^[;\[]+")       ; 行頭;/[ はコメント/セクション誤認
+    s := Trim(RegExReplace(s, "\s+", " "))
+    return (s != "") ? s : "取込"
+}
+
 ; CSVフィールドとして安全な形にエスケープ（カンマ・改行・ダブルクォートを含む場合のみ囲む）
 CsvField(s) {
     if InStr(s, '"') || InStr(s, ",") || InStr(s, "`n") || InStr(s, "`r")
@@ -432,13 +502,25 @@ ImportSnippets(clearFirst := false, dlg := false) {
         dlg ? SetCsvStatus(msg) : Flash(msg, 1800)
         return
     }
-    incoming := RegExMatch(f, "i)\.csv$") ? LoadSnippetsCsv(f) : LoadSnippets(f)
+    path := A_ScriptDir . "\snippets.ini"
+    isClibor := false
+    if RegExMatch(f, "i)\.csv$") {
+        existing := Map()
+        if !clearFirst
+            for s in LoadSnippets()
+                existing[s.label] := s.value
+        incoming := TryLoadCliborCsv(f, existing)
+        if incoming
+            isClibor := true
+        else
+            incoming := LoadSnippetsCsv(f)   ; 従来のlabel,body形式
+    } else
+        incoming := LoadSnippets(f)
     if (incoming.Length = 0) {
         msg := "取り込める定型文が見つかりませんでした（ラベル=本文 の形式）"
         dlg ? SetCsvStatus(msg) : Flash(msg, 2000)
         return
     }
-    path := A_ScriptDir . "\snippets.ini"
     try {
         if clearFirst
             FileDelete(path)   ; 既存を全クリアしてから取り込む(確認はGUI側で取得済み)
@@ -454,7 +536,8 @@ ImportSnippets(clearFirst := false, dlg := false) {
             nl := "", added++
         }
         ArchiveSnippetsCsv()                  ; 定型文フォルダ保存(ONの場合のみ)
-        msg := added . " 件を取り込みました（重複 " . (incoming.Length - added) . " 件はスキップ）"
+        skipped := incoming.Length - added
+        msg := (isClibor ? "Clibor形式として" : "") . added . " 件を取り込みました（重複 " . skipped . " 件はスキップ）"
         dlg ? SetCsvStatus(msg) : Flash(msg, 2000)
     } catch as e {
         msg := "インポートに失敗しました: " . e.Message
@@ -762,11 +845,12 @@ ShowLauncher() {
     CloseLauncher()
     LauncherGui := Gui("-Caption +AlwaysOnTop +ToolWindow +Border")
     LauncherGui.SetFont("s12", "Meiryo UI")
-    LauncherDragBar := LauncherGui.Add("Text", "x0 y0 w380 h16 BackgroundD4DCE8 +0x100")  ; SS_NOTIFY相当をv2既定に加え、押下を明示検知
+    LauncherDragBar := LauncherGui.Add("Text", "x0 y0 w380 h16 BackgroundD4DCE8 c1A3E7A +0x100", "  君斗りんくの送信サジェスト")  ; SS_NOTIFY相当をv2既定に加え、押下を明示検知
+    LauncherDragBar.SetFont("s8")
     gearBtn := LauncherGui.Add("Text", "x380 y0 w20 h16 BackgroundD4DCE8 cGray Center +0x100", "⚙")
     gearBtn.SetFont("s10")
     gearBtn.OnEvent("Click", ShowLauncherSettingsMenu)
-    LauncherGui.Add("Text", "x400 y2 w60 h12 cGray", "v1.9.0").SetFont("s8")   ; 掴みしろの右隣にバージョン表示
+    LauncherGui.Add("Text", "x400 y2 w60 h12 cGray", "v1.10.0").SetFont("s8")   ; 掴みしろの右隣にバージョン表示
     LauncherGui.SetFont("s12")
     LauncherTab := LauncherGui.Add("Tab3", "x0 y16 w460 -Wrap",
         ["履歴 " . ClipHistory.Length, "定型文 " . Snippets.Length])
@@ -1397,8 +1481,12 @@ LauncherWatchDrag() {
         return
     LauncherPinned := true, winX := gx, winY := gy, startMx := mx, startMy := my
     while GetKeyState("LButton", "P") {
+        if !IsObject(LauncherGui)   ; ドラッグ中にCloseLauncher()で破棄された場合(フォーカス喪失等)
+            return
         MouseGetPos &mx2, &my2
-        LauncherGui.Move(winX + (mx2 - startMx), winY + (my2 - startMy))
+        try LauncherGui.Move(winX + (mx2 - startMx), winY + (my2 - startMy))
+        catch
+            return   ; チェック直後にDestroyされた場合(単一スレッドのAHKでは稀だが念のため)
         Sleep 15
     }
 }
@@ -1602,7 +1690,7 @@ A_TrayMenu.Add("設定...", ShowSettingsWindow)
 A_TrayMenu.Add()  ; セパレータ
 A_TrayMenu.Add("設定フォルダを開く", (*) => Run('explorer.exe "' . A_ScriptDir . '"'))
 A_TrayMenu.Add()  ; セパレータ
-A_TrayMenu.Add("v1.9.0", (*) => 0), A_TrayMenu.Disable("v1.9.0")
+A_TrayMenu.Add("v1.10.0", (*) => 0), A_TrayMenu.Disable("v1.10.0")
 A_TrayMenu.Add()  ; セパレータ
 
 ; 初回起動時（スタートアップ未登録かつ確認未表示）は自動実行を促す

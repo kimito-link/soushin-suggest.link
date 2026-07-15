@@ -1064,6 +1064,16 @@ p.lede { color: var(--muted); font-size: 14px; margin: 10px 0 0; max-width: 58ch
 .step-note { text-align: center; font-size: 12.5px; color: var(--muted); margin-top: 16px; }
 .step-note strong { color: var(--accent); }
 
+/* clipboard & snippets — 新規セクション「コピーしたものは、なくさない。」 */
+.clip-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 24px; }
+.clip-uses { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 28px; }
+.clip-use-card { background: var(--panel-soft); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 16px; font-size: 12.5px; color: var(--muted); }
+.clip-use-card strong { display: block; color: var(--fg); font-size: 13px; margin-bottom: 6px; }
+@media (max-width: 620px) {
+  .clip-row { grid-template-columns: 1fr; }
+  .clip-uses { grid-template-columns: 1fr; }
+}
+
 @media (max-width: 620px) {
   .step-row { grid-template-columns: 1fr; }
 }
@@ -2474,18 +2484,59 @@ footer { padding: 32px 0 48px; }
   </div>
 </section>
 
+<section id="clipboard">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="section-eyebrow">clipboard & snippets</div>
+      <h2>コピーしたものは、なくさない。</h2>
+      <p class="lede">なぞってコピーは速い。でも速いぶん、次のコピーで前のものが消えるのは惜しい。送信サジェストは、コピーしたテキストも撮ったスクショも、履歴として手元に置いておけます。</p>
+    </div>
+    <div class="clip-row">
+      <div class="step-card">
+        <h3>スクショの履歴は、文字じゃなくて絵で探す。</h3>
+        <p>Win+Vを使ったことがある人なら、画像の履歴が「画像」としか表示されない歯がゆさをご存じのはず。送信サジェストの履歴は、撮ったスクショやコピーした画像を実物のサムネイルで一覧します。「さっき撮ったあの画面、どれだっけ」を、開いて確かめる前に目で見つけられます。</p>
+      </div>
+      <div class="step-card">
+        <h3>残したい人だけ、残せる。しかも慎重に。</h3>
+        <p>履歴・スクショ・定型文は、標準ではPCに保存されず、アプリを終わればそのまま消えます。「消えてほしくない」人は、設定ウィンドウでフォルダ保存をONにできます（既定はOFFです）。ONにしたときも、テキストはすぐには書き込みません。クリップボードの自動クリア設定時間より2秒長く待ってから保存する「遅延コミット」方式なので、パスワードマネージャが自動で消すような内容は、ディスクに触れる前に消えます。画像（自動クリアの対象外）はそのまま保存されます。</p>
+      </div>
+      <div class="step-card">
+        <h3>保存する・しないは、チェックボックス1つ。</h3>
+        <p>「どこに、何を、残すか」は専用の設定ウィンドウで切り替えます。項目ごとに説明文つきのチェックボックスをON/OFFして、保存先フォルダを選ぶだけ。設定ファイルを開く必要はありません。今の設定で何が残って何が消えるのか、画面を見ればわかるようにしています。</p>
+      </div>
+      <div class="step-card">
+        <h3>Cliborで育てた定型文、そのまま連れてこられます。</h3>
+        <p>CliborからエクスポートしたCSVを選ぶだけで、定型文をまとめて取り込めます。ヘッダの有無は自動で判別するので、形式を気にする必要はありません。何年ぶんの定型文があっても、引っ越し作業は1回のクリックで終わります。</p>
+      </div>
+    </div>
+    <div class="clip-uses">
+      <div class="clip-use-card"><strong>デザイナー・企画職</strong>参考画面を集める日は、スクショが20枚30枚になります。あとから「あの配色のやつ」を探すとき、ファイル名の一覧では見つかりません。サムネイルの履歴なら、目で流すだけで当たりが引けます。</div>
+      <div class="clip-use-card"><strong>事務・サポート職</strong>問い合わせ返信の8割は、いつもの定型文＋今回のスクショです。定型文は取り込んだものをそのまま呼び出し、スクショは履歴から選ぶだけ。「前に書いたはずの文面をメモ帳から探す」時間がなくなります。</div>
+      <div class="clip-use-card"><strong>経理・総務など「コピーが仕事」の職種</strong>請求番号、口座情報、宛先——1日に何度も同じものをコピーしては、次のコピーで消しています。履歴に残っていれば、コピーし直すためだけに元の画面へ戻る往復が消えます。</div>
+    </div>
+  </div>
+</section>
+
 <section>
   <div class="wrap">
     <div class="section-head">
       <div class="section-eyebrow">safety</div>
-      <h2>効かせる場所は、選んでいます。</h2>
+      <h2>効く場所は選ぶ。残すかどうかは、あなたが選ぶ。</h2>
     </div>
     <div class="safety">
       <div class="safety-icon">✓</div>
       <div>
-        <strong>対象アプリだけに限定する「許可リスト方式」</strong>を採用しています。
+        <strong>送信や自動操作は、対象アプリだけに限定する「許可リスト方式」</strong>です。
         ブラウザ・チャットアプリ・ターミナルなど、動いてよい場所だけを明示的に登録し、それ以外では一切反応しません。
-        Excelの操作やゲーム中の誤爆、ターミナルでの意図しない中断（Ctrl+C）を防ぐための設計です。
+        Excelの操作やゲーム中の誤爆、ターミナルでの意図しない中断（Ctrl+C）を防ぐための設計です。この方針は今後も変わりません。
+      </div>
+    </div>
+    <div class="safety" style="margin-top: 14px;">
+      <div class="safety-icon">✓</div>
+      <div>
+        <strong>クリップボード履歴は、どのアプリでのコピーも拾います。ただし「拾う」だけです。</strong>
+        履歴はあくまで手元のメモ。そこから先の貼り付け・送信は、いつも通りあなたの操作と許可リストの範囲でしか動きません。
+        そして履歴は<strong>標準ではPC内に保存されません</strong>。アプリを終了すれば消えます。フォルダへの保存は設定ウィンドウでONにした人だけの機能で、しかもテキストは「自動クリアの設定時間＋2秒」待ってから書き込む<strong>遅延コミット</strong>方式。パスワードマネージャの自動クリアが先に働けば、その内容は一度もディスクに書かれません。
       </div>
     </div>
   </div>
@@ -2766,6 +2817,18 @@ footer { padding: 32px 0 48px; }
     <div class="faq-item">
       <p class="faq-q"><span>Q.</span>使い方が分からないときは、どこに聞けますか？</p>
       <p class="faq-a">公式LINEアカウントでAIサポートが対応します。「サイドボタンの場所が分からない」「起動時に警告が出た」など、自由な文章で質問していただければ、状況に応じて案内します。AIで解決しない内容は、担当者が個別に確認します。</p>
+    </div>
+    <div class="faq-item">
+      <p class="faq-q"><span>Q.</span>Cliborの定型文を移せますか？</p>
+      <p class="faq-a">はい。CliborのエクスポートCSVをワンクリックで取り込めます。ヘッダの有無は自動判別するので、エクスポートしたファイルをそのまま選ぶだけです。</p>
+    </div>
+    <div class="faq-item">
+      <p class="faq-q"><span>Q.</span>コピーした内容はPCに保存されますか？</p>
+      <p class="faq-a">標準では保存されません。アプリ終了で消えます。フォルダ保存は設定ウィンドウでONにした場合のみで、テキストは自動クリア設定時間＋2秒の遅延コミット付きです。</p>
+    </div>
+    <div class="faq-item">
+      <p class="faq-q"><span>Q.</span>履歴はどのアプリのコピーも記録しますか？</p>
+      <p class="faq-a">はい、履歴には載ります。ただし貼り付け・送信などの自動操作は許可リスト登録アプリ内のみです。</p>
     </div>
   </div>
 </section>
