@@ -18,7 +18,9 @@ CoordMode "Mouse", "Screen"
 global CopyOnSelect := true, dragX := 0, dragY := 0, dragT := 0
 global SitesConfig := Map()
 global SiteRules := []
-global ClipHistory := [], ClipHistoryMax := 30   ; {text,time}の配列・メモリのみ・非永続 — 永続化禁止(唯一の安全特性。エクスポートも不可。経緯は_docs参照)
+global ClipHistory := [], ClipHistoryMax := 30   ; {text,time}の配列・メモリのみ
+; 既定は非永続。archiveimage/archivetextトグルによる明示オプトイン例外あり(検疫付き・既定OFF)。
+; 経緯は_docs/CLIPBOARD-HISTORY-FOLDER-ARCHIVE-DESIGN.md参照
 global LongPressSec := 0.35     ; sites.ini [general] longpress= で上書き可
 global LauncherGui := 0, LauncherTarget := 0, LauncherTab := 0, Snippets := [], LauncherDragBar := 0, LauncherPos := "", LauncherPinned := false, LauncherLvH := 0, LauncherLbS := 0, LauncherHoverLast := ""
 global ClipWatchOn := true                ; トレイから一時停止可
@@ -30,6 +32,8 @@ global ClipUserWindowMs := 1000           ; ユーザー操作限定フィルタ
 global ClipAutoClearSec := 45, ClipMaxLen := 100000
 global ClipExcludeExes := Map("keepass.exe",1, "keepassxc.exe",1, "1password.exe",1, "bitwarden.exe",1)
 global ClipImageMax := 5, ClipImageMaxBytes := 36 * 1024 * 1024   ; 画像専用の件数上限・4Kスクショ程度まで許容
+global ClipArchiveImage := false, ClipArchiveText := false, ClipArchiveDir := ""   ; 既定OFF・オプトイン
+global PendingArchive := []                ; テキストの検疫待ち配列 {text, tick}(45秒+2秒で確定保存)
 
 Flash(msg, ms := 1500) {
     ToolTip(msg)
@@ -39,7 +43,7 @@ Flash(msg, ms := 1500) {
 ; --- load sites.ini (per-app rules + [sites] title-keyword rules) ---
 ; IniReadは使わない: 非ASCIIキーをUTF-16 LE以外で誤読する既知の問題があり、[sites]は日本語キーワードを扱うため
 LoadSitesConfig() {
-    global SitesConfig, SiteRules, LongPressSec, ClipWatchOn, ClipHistoryMax, ClipAutoClearSec, ClipExcludeExes, ClipImageMax, ClipImageMaxBytes
+    global SitesConfig, SiteRules, LongPressSec, ClipWatchOn, ClipHistoryMax, ClipAutoClearSec, ClipExcludeExes, ClipImageMax, ClipImageMaxBytes, ClipArchiveImage, ClipArchiveText, ClipArchiveDir
     SitesConfig := Map()
     SiteRules := []
     iniPath := A_ScriptDir . "\sites.ini"
@@ -84,6 +88,12 @@ LoadSitesConfig() {
                 ClipImageMax := Integer(val)
             else if (k = "imagemaxmb" && IsNumber(val))
                 ClipImageMaxBytes := Integer(val) * 1024 * 1024
+            else if (k = "archiveimage")
+                ClipArchiveImage := (StrLower(val) = "on")
+            else if (k = "archivetext")
+                ClipArchiveText := (StrLower(val) = "on")
+            else if (k = "archivedir")
+                ClipArchiveDir := val
             else if (k = "exclude")
                 for e in StrSplit(val, ",")
                     if (Trim(e) != "")
@@ -193,7 +203,7 @@ ActivateGitBash() {
 }
 
 PushClipHistory(text) {
-    global ClipHistory, ClipHistoryMax
+    global ClipHistory, ClipHistoryMax, ClipArchiveText
     for i, v in ClipHistory
         if (v.type = "text" && v.text = text) {   ; 画像のプレースホルダー文字列と偶然一致しても誤爆しない
             ClipHistory.RemoveAt(i)   ; 重複は先頭へ昇格（時刻も更新される）
@@ -202,6 +212,9 @@ PushClipHistory(text) {
     ClipHistory.InsertAt(1, {type: "text", text: text, time: NowWithWeekday()})
     while (ClipHistory.Length > ClipHistoryMax)
         ClipHistory.Pop()
+    ; テキストは検疫キューへ。自動クリアで消えれば一度もディスクに書かれない(D節の核心)
+    if ClipArchiveText
+        QueueTextArchive(text)
 }
 
 ; FormatTimeの ddd はロケール依存で日本語曜日が出ないことがあるため自前マッピング
@@ -357,6 +370,14 @@ CsvField(s) {
 
 ; 定型文をCSV(label,body)でエクスポート。他ツール(Excel等)との往復を想定した汎用形式。
 ; dlg=trueなら結果をCSVダイアログのステータス行に出す。falseならToolTip(Flash)。
+; snippets(items配列)をCSVテキスト(UTF-8 BOM付き・ヘッダlabel,body)へ整形する共通ロジック
+SnippetsToCsvText(items) {
+    out := Chr(0xFEFF) . "label,body`r`n"
+    for s in items
+        out .= CsvField(s.label) . "," . CsvField(s.value) . "`r`n"
+    return out
+}
+
 ExportSnippetsCsv(dlg := false) {
     items := LoadSnippets()
     if (items.Length = 0) {
@@ -369,17 +390,32 @@ ExportSnippetsCsv(dlg := false) {
     if !RegExMatch(f, "i)\.csv$")
         f .= ".csv"
     try {
-        out := Chr(0xFEFF) . "label,body`r`n"   ; UTF-8 BOM付き(Excel文字化け対策)
-        for s in items
-            out .= CsvField(s.label) . "," . CsvField(s.value) . "`r`n"
         if FileExist(f)
             FileDelete(f)
-        FileAppend(out, f, "UTF-8")
+        FileAppend(SnippetsToCsvText(items), f, "UTF-8")
         msg := items.Length . " 件をCSVに書き出しました"
         dlg ? SetCsvStatus(msg) : Flash(msg, 1800)
     } catch as e {
         msg := "エクスポートに失敗しました: " . e.Message
         dlg ? SetCsvStatus(msg) : Flash(msg, 2000)
+    }
+}
+
+; 定型文フォルダ保存(既定OFF・オプトイン)。snippets.iniが変更されるたびに呼ばれ、
+; template/snippets.csv を丸ごと上書きする(定型文は元々ファイル永続化済みなので検疫は不要)。
+ArchiveSnippetsCsv() {
+    global ClipArchiveText
+    if !ClipArchiveText
+        return
+    dir := ArchiveSubDir("template")
+    if (dir = "")
+        return
+    items := LoadSnippets()
+    path := dir . "\snippets.csv"
+    try {
+        if FileExist(path)
+            FileDelete(path)
+        FileAppend(SnippetsToCsvText(items), path, "UTF-8")
     }
 }
 
@@ -417,6 +453,7 @@ ImportSnippets(clearFirst := false, dlg := false) {
             FileAppend(nl . s.label . "=" . StrReplace(s.value, "`n", "\n") . "`n", path, "UTF-8")
             nl := "", added++
         }
+        ArchiveSnippetsCsv()                  ; 定型文フォルダ保存(ONの場合のみ)
         msg := added . " 件を取り込みました（重複 " . (incoming.Length - added) . " 件はスキップ）"
         dlg ? SetCsvStatus(msg) : Flash(msg, 2000)
     } catch as e {
@@ -441,6 +478,7 @@ ShowLauncherSettingsMenu(*) {
     m.Add("クリップボード履歴を全削除", DeleteHistoryAll)
     m.Add("定型文ファイルを編集 (snippets.ini)", EditSnippetsFile)
     m.Add("定型文の管理...", ShowSnippetManager)
+    m.Add("設定...", ShowSettingsWindow)
     m.Add("設定フォルダを開く", (*) => Run('explorer.exe "' . A_ScriptDir . '"'))
     if !ClipWatchOn
         m.Check("クリップボード監視を一時停止")
@@ -643,6 +681,7 @@ SnipMgrWriteLine(lineNo, expectLabel, newLine) {
         out .= l . "`n"
     FileDelete(path)
     FileAppend(RTrim(out, "`n") . "`n", path, "UTF-8")
+    ArchiveSnippetsCsv()                      ; 定型文フォルダ保存(ONの場合のみ)
     return true
 }
 
@@ -665,6 +704,7 @@ SnipMgrAdd(*) {
     try {
         nl := (FileExist(path) && !RegExMatch(FileRead(path, "UTF-8"), "\R$")) ? "`n" : ""
         FileAppend(nl . label . "=" . StrReplace(body, "`n", "\n") . "`n", path, "UTF-8")
+        ArchiveSnippetsCsv()                  ; 定型文フォルダ保存(ONの場合のみ)
         SnipMgrRefresh()
         SetCsvStatus("追加しました: " . label)
     } catch as e {
@@ -726,7 +766,7 @@ ShowLauncher() {
     gearBtn := LauncherGui.Add("Text", "x380 y0 w20 h16 BackgroundD4DCE8 cGray Center +0x100", "⚙")
     gearBtn.SetFont("s10")
     gearBtn.OnEvent("Click", ShowLauncherSettingsMenu)
-    LauncherGui.Add("Text", "x400 y2 w60 h12 cGray", "v1.8.0").SetFont("s8")   ; 掴みしろの右隣にバージョン表示
+    LauncherGui.Add("Text", "x400 y2 w60 h12 cGray", "v1.9.0").SetFont("s8")   ; 掴みしろの右隣にバージョン表示
     LauncherGui.SetFont("s12")
     LauncherTab := LauncherGui.Add("Tab3", "x0 y16 w460 -Wrap",
         ["履歴 " . ClipHistory.Length, "定型文 " . Snippets.Length])
@@ -909,7 +949,7 @@ CaptureClipImage() {
 }
 
 PushClipImage(dib, w, h) {
-    global ClipHistory, ClipHistoryMax, ClipImageMax
+    global ClipHistory, ClipHistoryMax, ClipImageMax, ClipArchiveImage
     label := "📷 画像 " . w . "×" . h . " (" . Round(dib.Size / 1048576, 1) . "MB)"
     ClipHistory.InsertAt(1, {type: "image", text: label, dib: dib, w: w, h: h, time: NowWithWeekday()})
     n := 0
@@ -920,6 +960,9 @@ PushClipImage(dib, w, h) {
         }
     while (ClipHistory.Length > ClipHistoryMax)
         ClipHistory.Pop()
+    ; 画像は検疫なし即保存(自動クリアはテキストのみ追跡するため対象外。D節参照)
+    if (ClipArchiveImage && (dir := ArchiveSubDir("screenshot")) != "")
+        SaveDibAsPng(dib, w, h, dir . "\img-" . FormatTime(, "yyyyMMdd-HHmmss") . ".png")
 }
 
 SetClipboardImage(dib) {
@@ -1009,6 +1052,230 @@ DibBitsOffset(dib) {
     return (off < dib.Size) ? off : 0
 }
 
+; --- クリップボード履歴のフォルダ永続保存(既定OFF・オプトイン例外) ---
+; 非永続の原則を覆す唯一の経路。安全側の設計は3点:
+; (1) 既定OFF・ON時は警告ダイアログ (2) テキストは検疫(45秒+2秒)を通過したものだけ書く
+;     ＝自動クリア機構がそのままディスク書き込みの拒否権として働く (3) 画像は検疫なし即保存
+;     (自動クリアはテキストのみ追跡するため対象外。スクショは能動的な成果物で脅威モデルが違う)
+; 経緯・矛盾解消の論理は_docs/CLIPBOARD-HISTORY-FOLDER-ARCHIVE-DESIGN.md参照
+
+; sites.ini の [section] 内 key= を書き換え/追記する。IniWrite不使用の掟を継承(read-modify-write)
+SaveIniKey(section, key, val) {
+    path := A_ScriptDir . "\sites.ini"
+    lines := FileExist(path) ? StrSplit(FileRead(path, "UTF-8"), "`n", "`r") : []
+    out := "", inSec := false, done := false
+    for line in lines {
+        t := Trim(line)
+        if RegExMatch(t, "^\[(.+)\]$", &m) {
+            if (inSec && !done)
+                out .= key . "=" . val . "`n", done := true
+            inSec := (Trim(m[1]) = section)
+        } else if (inSec && !done && RegExMatch(t, "i)^\Q" . key . "\E\s*=")) {
+            out .= key . "=" . val . "`n", done := true
+            continue
+        }
+        out .= line . "`n"
+    }
+    if !done
+        out .= (inSec ? "" : "[" . section . "]`n") . key . "=" . val . "`n"
+    ; FileOpen(...,"w","UTF-8")はBOMを付与してしまう(既存sites.iniはBOMなし)ため使わない。
+    ; 他の書き込み箇所と同じFileDelete+FileAppend(UTF-8明示)の流儀で揃える。
+    if FileExist(path)
+        FileDelete(path)
+    FileAppend(RTrim(out, "`n") . "`n", path, "UTF-8")
+}
+
+; ベースフォルダ(サブフォルダ分けなし)。ArchiveSubDirはこの配下にscreenshot/history/templateを作る
+ArchiveBaseDir() {
+    global ClipArchiveDir
+    return (ClipArchiveDir != "") ? ClipArchiveDir : A_ScriptDir . "\clip-archive"
+}
+
+; サブフォルダ("screenshot"|"history"|"template")を解決＋作成。
+; 作れなければ空文字を返し呼び出し元で保存をスキップする(fail-closed)
+ArchiveSubDir(sub) {
+    dir := ArchiveBaseDir() . "\" . sub
+    try DirCreate(dir)
+    return DirExist(dir) ? dir : ""
+}
+
+; トレイ「保存フォルダを開く」用。まだ何も保存されていなければ新規作成せず案内する
+OpenArchiveDir(*) {
+    dir := ArchiveBaseDir()
+    if DirExist(dir)
+        Run('explorer.exe "' . dir . '"')
+    else
+        Flash("まだ何も保存されていません", 1800)
+}
+
+; PNGエンコーダをGdipGetImageEncodersで列挙して探す(CLSID直指定より環境差異に強い)
+PngEncoderClsid() {
+    DllCall("gdiplus\GdipGetImageEncodersSize", "UInt*", &count := 0, "UInt*", &size := 0)
+    if !size
+        return 0
+    buf := Buffer(size)
+    if DllCall("gdiplus\GdipGetImageEncoders", "UInt", count, "UInt", size, "Ptr", buf)
+        return 0
+    ; PNGのCLSIDはGDI+仕様上の既知の固定値(Microsoft公式ドキュメントで確認済み)
+    clsid := Buffer(16)
+    DllCall("ole32\CLSIDFromString", "Str", "{557CF406-1A04-11D3-9A73-0000F81EF32E}", "Ptr", clsid)
+    return clsid
+}
+
+; CF_DIB→BMPファイル(BITMAPFILEHEADER14B+DIB丸書き)。PNG保存の失敗時フォールバック。
+SaveDibAsBmp(dib, path) {
+    off := DibBitsOffset(dib)
+    if !off
+        return false
+    hdr := Buffer(14, 0)
+    NumPut("UShort", 0x4D42, hdr, 0)          ; "BM"
+    NumPut("UInt", 14 + dib.Size, hdr, 2), NumPut("UInt", 14 + off, hdr, 10)
+    try {
+        f := FileOpen(path, "w")
+        f.RawWrite(hdr, 14), f.RawWrite(dib, dib.Size), f.Close()
+        return true
+    } catch
+        return false
+}
+
+; CF_DIB→PNGファイル。既存MakeHistThumbと同じStretchDIBits経由でHBITMAP化してからGDI+化する
+; (CF_DIBから直接GdipCreateBitmapFromGdiDibを使わず、既存資産と手法を揃える)。失敗時はBMPへ。
+SaveDibAsPng(dib, w, h, path) {
+    static gdipToken := 0
+    off := DibBitsOffset(dib)
+    if !off
+        return SaveDibAsBmp(dib, StrReplace(path, ".png", ".bmp"))
+    if !gdipToken {
+        DllCall("LoadLibrary", "Str", "gdiplus")
+        si := Buffer(A_PtrSize = 8 ? 24 : 16, 0), NumPut("UInt", 1, si)
+        if !DllCall("gdiplus\GdiplusStartup", "Ptr*", &gdipToken := 0, "Ptr", si, "Ptr", 0)
+            return SaveDibAsBmp(dib, StrReplace(path, ".png", ".bmp"))
+    }
+    hdcS := DllCall("GetDC", "Ptr", 0, "Ptr")
+    hdcM := DllCall("CreateCompatibleDC", "Ptr", hdcS, "Ptr")
+    hBmp := DllCall("CreateCompatibleBitmap", "Ptr", hdcS, "Int", w, "Int", h, "Ptr")
+    ok := false
+    if (hdcM && hBmp) {
+        hOld := DllCall("SelectObject", "Ptr", hdcM, "Ptr", hBmp, "Ptr")
+        DllCall("StretchDIBits", "Ptr", hdcM, "Int", 0, "Int", 0, "Int", w, "Int", h
+            , "Int", 0, "Int", 0, "Int", w, "Int", h
+            , "Ptr", dib.Ptr + off, "Ptr", dib, "UInt", 0, "UInt", 0x00CC0020)
+        DllCall("SelectObject", "Ptr", hdcM, "Ptr", hOld, "Ptr")
+        pBmp := 0
+        if !DllCall("gdiplus\GdipCreateBitmapFromHBITMAP", "Ptr", hBmp, "Ptr", 0, "Ptr*", &pBmp) && pBmp {
+            clsid := PngEncoderClsid()
+            if clsid
+                ok := !DllCall("gdiplus\GdipSaveImageToFile", "Ptr", pBmp, "Str", path, "Ptr", clsid, "Ptr", 0)
+            DllCall("gdiplus\GdipDisposeImage", "Ptr", pBmp)
+        }
+    }
+    if hBmp
+        DllCall("DeleteObject", "Ptr", hBmp)
+    if hdcM
+        DllCall("DeleteDC", "Ptr", hdcM)
+    DllCall("ReleaseDC", "Ptr", 0, "Ptr", hdcS)
+    return ok ? true : SaveDibAsBmp(dib, StrReplace(path, ".png", ".bmp"))
+}
+
+; テキストの検疫キュー投入。ClipAutoClearSec+2秒を過ぎたものだけCommitPendingArchiveが書く。
+; この待ち時間こそが「パスワードマネージャの自動クリアがディスク書き込みを止める」仕組みの核心。
+QueueTextArchive(text) {
+    global PendingArchive
+    PendingArchive.Push({text: text, tick: A_TickCount})
+    SetTimer(CommitPendingArchive, 5000)
+}
+
+CommitPendingArchive() {
+    global PendingArchive, ClipAutoClearSec
+    windowMs := ClipAutoClearSec * 1000 + 2000   ; +2秒: クリア通知との競合マージン
+    i := 1
+    while (i <= PendingArchive.Length) {
+        p := PendingArchive[i]
+        if (A_TickCount - p.tick >= windowMs) {
+            dir := ArchiveSubDir("history")
+            if (dir != "") {
+                path := dir . "\history-" . FormatTime(, "yyyy-MM-dd") . ".csv"
+                isNew := !FileExist(path)
+                try {
+                    out := isNew ? Chr(0xFEFF) . "time,text`r`n" : ""   ; 新規時のみUTF-8 BOM+ヘッダ
+                    out .= CsvField(FormatTime(, "HH:mm:ss")) . "," . CsvField(p.text) . "`r`n"
+                    FileAppend(out, path, "UTF-8")
+                }
+            }
+            PendingArchive.RemoveAt(i)
+        } else
+            i++
+    }
+    if (PendingArchive.Length = 0)
+        SetTimer(CommitPendingArchive, 0)
+}
+
+; --- 設定ウィンドウ（フォルダ保存のON/OFFをチェックボックスで一望できる専用画面） ---
+; トレイメニューは項目名を読まないと何が起きるか分からない、という声を受けて新設。
+; チェックボックス+短い説明文を並べるだけの単一画面。SnipMgrGuiと同じシングルトンパターン。
+global SettingsGui := 0, SettingsChkImage := 0, SettingsChkText := 0
+
+ShowSettingsWindow(*) {
+    global SettingsGui, SettingsChkImage, SettingsChkText, ClipArchiveImage, ClipArchiveText
+    if SettingsGui {
+        SettingsChkImage.Value := ClipArchiveImage
+        SettingsChkText.Value := ClipArchiveText
+        SettingsGui.Show()
+        return
+    }
+    SettingsGui := Gui("+ToolWindow", "設定")
+    SettingsGui.SetFont("s9", "Meiryo UI")
+    SettingsGui.Add("GroupBox", "x10 y10 w380 h130", "フォルダ保存（既定はOFF・保存すると元に戻せません）")
+    SettingsChkImage := SettingsGui.Add("CheckBox", "x20 y32 w360", "スクショ（コピーした画像）をフォルダに保存する")
+    SettingsChkImage.Value := ClipArchiveImage
+    SettingsChkImage.OnEvent("Click", (*) => ApplyArchiveToggle("image", SettingsChkImage))
+    SettingsGui.Add("Text", "x38 y52 w340 h16 cGray", "保存先: clip-archive\screenshot（PNG形式）")
+
+    SettingsChkText := SettingsGui.Add("CheckBox", "x20 y78 w360", "テキストのコピー履歴をフォルダに保存する")
+    SettingsChkText.Value := ClipArchiveText
+    SettingsChkText.OnEvent("Click", (*) => ApplyArchiveToggle("text", SettingsChkText))
+    SettingsGui.Add("Text", "x38 y98 w340 h32 cGray",
+        "保存先: clip-archive\history（CSV形式）`nパスワード等を扱う際はOFFのままにしてください")
+
+    SettingsGui.Add("Button", "x20 y150 w150 h28", "保存フォルダを開く").OnEvent("Click", OpenArchiveDir)
+    SettingsGui.Add("Button", "x290 y150 w100 h28", "閉じる").OnEvent("Click", (*) => SettingsGui.Hide())
+    SettingsGui.OnEvent("Close", (*) => SettingsGui.Hide())
+    SettingsGui.OnEvent("Escape", (*) => SettingsGui.Hide())
+    SettingsGui.Show("w400 h190")
+}
+
+; 設定ウィンドウのチェックボックスから呼ばれる。ON時は警告→同意→トレイ側と同じ永続化。
+; チェックボックスは操作の起点であると同時に表示状態でもあるため、拒否時は元の値へ戻す。
+ApplyArchiveToggle(kind, chk) {
+    global ClipArchiveImage, ClipArchiveText
+    turningOn := chk.Value
+    if turningOn {
+        msg := (kind = "image")
+            ? "コピーした画像がディスク上のファイルに残るようになります。`n有効にしますか？"
+            : "コピーしたテキストがディスク上のファイルに残るようになります。`n"
+                . "パスワード等を扱う際はOFFのままにしてください。`n`n有効にしますか？"
+        if (MsgBox(msg, "フォルダ保存の確認", "YesNo Icon!") != "Yes") {
+            chk.Value := 0                    ; 拒否時はチェックを戻す
+            return
+        }
+    }
+    if (kind = "image") {
+        ClipArchiveImage := turningOn
+        SaveIniKey("clipboard", "archiveimage", turningOn ? "on" : "off")
+    } else {
+        ClipArchiveText := turningOn
+        SaveIniKey("clipboard", "archivetext", turningOn ? "on" : "off")
+    }
+    Flash(turningOn ? "フォルダ保存: ON" : "フォルダ保存: OFF")
+}
+
+; 検疫中(未確定)の項目は保存せず終了する。fail-closed: 「終了直前のコピーが保存されない」より
+; 「終了直前のパスワードがディスクに残る」方が重い、という判断(G節参照)。
+DiscardPendingArchiveOnExit(*) {
+    global PendingArchive
+    PendingArchive := []
+}
+
 ; 画像要素1件→ImageListへ追加し0始まりindexを返す。失敗は-1(プレースホルダー表示のまま)
 ; 等倍HBITMAPを一度も作らず、CF_DIBバッファから48x48へ直接縮小描画する(StretchDIBits)。
 MakeHistThumb(v) {
@@ -1079,15 +1346,19 @@ ClipSourceExcluded() {
 }
 
 MaybeDropAutoCleared() {
-    global ClipHistory, LastCaptureText, LastCaptureTick, ClipAutoClearSec
+    global ClipHistory, LastCaptureText, LastCaptureTick, ClipAutoClearSec, PendingArchive
     if (LastCaptureText = "" || A_TickCount - LastCaptureTick > ClipAutoClearSec * 1000)
         return
     for i, v in ClipHistory
         if (v.type = "text" && v.text = LastCaptureText) {   ; 画像のプレースホルダーと誤爆させない
             ClipHistory.RemoveAt(i)
-            Flash("自動クリアを検知したため履歴からも削除しました", 1500)
+            Flash("自動クリアを検知したため履歴とフォルダ保存予約からも削除しました", 1500)
             break
         }
+    ; 検疫待ちのフォルダ保存予約も同時に取り消す(メモリとディスク行きを同時に守る。D節の核心)
+    i := 1
+    while (i <= PendingArchive.Length)
+        (PendingArchive[i].text = LastCaptureText) ? PendingArchive.RemoveAt(i) : i++
     LastCaptureText := ""
 }
 
@@ -1238,8 +1509,9 @@ DeleteHistoryAt(idx) {
 }
 
 DeleteHistoryAll(*) {                          ; トレイメニューからも呼ぶため可変引数
-    global ClipHistory
+    global ClipHistory, PendingArchive
     ClipHistory := []
+    PendingArchive := []                       ; 検疫待ちのフォルダ保存予約も同時に破棄
     RefreshLauncherHistory()
     Flash("履歴を全削除しました", 1200)
 }
@@ -1288,6 +1560,7 @@ PromoteHistoryAt(idx) {
     try {
         nl := (FileExist(path) && !RegExMatch(FileRead(path, "UTF-8"), "\R$")) ? "`n" : ""
         FileAppend(nl . label . "=" . body . "`n", path, "UTF-8")
+        ArchiveSnippetsCsv()                  ; 定型文フォルダ保存(ONの場合のみ)
         Flash("定型文に登録しました: " . label, 1800)
     } catch as e {
         Flash("登録に失敗しました: " . e.Message, 2000)
@@ -1305,6 +1578,9 @@ LauncherPickKey(hk, *) {
 ; --- 起動時 ---
 LoadSitesConfig()
 OnClipboardChange(ClipChanged)
+; 検疫中の未確定項目は書かずに終了する(fail-closed)。PendingArchiveは単なるメモリ配列なので
+; プロセス終了で自然に消えるが、意図を明示するためOnExitで明示クリアする。
+OnExit(DiscardPendingArchiveOnExit)
 ; 数字キー1-9,0=10: ランチャーがアクティブな間だけ有効（HotIfスコープ限定・解除処理は不要）
 HotIf (*) => IsObject(LauncherGui) && WinActive("ahk_id " . LauncherGui.Hwnd)
 Loop 10
@@ -1319,9 +1595,14 @@ A_TrayMenu.Add("クリップボード監視を一時停止", ToggleClipWatch)
 A_TrayMenu.Add("クリップボード履歴を全削除", DeleteHistoryAll)
 A_TrayMenu.Add("定型文ファイルを編集 (snippets.ini)", EditSnippetsFile)
 A_TrayMenu.Add("定型文の管理...", ShowSnippetManager)
+A_TrayMenu.Add()  ; セパレータ
+; 非永続の原則の例外(既定OFF・オプトイン)。経緯は_docs/CLIPBOARD-HISTORY-FOLDER-ARCHIVE-DESIGN.md参照
+; トレイ項目名だけでは何が起きるか分からないという声を受け、専用の設定ウィンドウに集約。
+A_TrayMenu.Add("設定...", ShowSettingsWindow)
+A_TrayMenu.Add()  ; セパレータ
 A_TrayMenu.Add("設定フォルダを開く", (*) => Run('explorer.exe "' . A_ScriptDir . '"'))
 A_TrayMenu.Add()  ; セパレータ
-A_TrayMenu.Add("v1.8.0", (*) => 0), A_TrayMenu.Disable("v1.8.0")
+A_TrayMenu.Add("v1.9.0", (*) => 0), A_TrayMenu.Disable("v1.9.0")
 A_TrayMenu.Add()  ; セパレータ
 
 ; 初回起動時（スタートアップ未登録かつ確認未表示）は自動実行を促す
