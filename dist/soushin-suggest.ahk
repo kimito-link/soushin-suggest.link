@@ -32,6 +32,7 @@ global ClipUserWindowMs := 1000           ; ユーザー操作限定フィルタ
 global ClipAutoClearSec := 45, ClipMaxLen := 100000
 global ClipExcludeExes := Map("keepass.exe",1, "keepassxc.exe",1, "1password.exe",1, "bitwarden.exe",1)
 global ClipImageMax := 5, ClipImageMaxBytes := 36 * 1024 * 1024   ; 画像専用の件数上限・4Kスクショ程度まで許容
+global ClipImageMinPx := 32                ; 幅/高さがこれ未満の極小画像(ノイズ)は履歴に記録しない
 global ClipArchiveImage := false, ClipArchiveText := false, ClipArchiveDir := ""   ; 既定OFF・オプトイン
 global PendingArchive := []                ; テキストの検疫待ち配列 {text, tick}(45秒+2秒で確定保存)
 
@@ -187,7 +188,8 @@ ActivateGitBash() {
 
 ~LButton up:: {
     global CopyOnSelect, dragX, dragY, dragT, LastLButtonUpTick, LastUserCopyTick
-    LastLButtonUpTick := A_TickCount          ; コンテキストメニュー由来のコピーを救う
+    if CopyOnSelectApp()                      ; 対象アプリでのクリックのみ「コピー由来」候補として記録
+        LastLButtonUpTick := A_TickCount      ; コンテキストメニュー由来のコピーを救う
     if !CopyOnSelect || !CopyOnSelectApp()
         return
     MouseGetPos &x, &y
@@ -559,8 +561,8 @@ ShowLauncherSettingsMenu(*) {
     m := Menu()
     m.Add("クリップボード監視を一時停止", ToggleClipWatch)
     m.Add("クリップボード履歴を全削除", DeleteHistoryAll)
-    m.Add("定型文ファイルを編集 (snippets.ini)", EditSnippetsFile)
     m.Add("定型文の管理...", ShowSnippetManager)
+    m.Add("定型文ファイルを編集 (snippets.ini)", EditSnippetsFile)   ; 上級者向け(生のiniを直接編集)。通常は上のGUIで足りる
     m.Add("設定...", ShowSettingsWindow)
     m.Add("設定フォルダを開く", (*) => Run('explorer.exe "' . A_ScriptDir . '"'))
     if !ClipWatchOn
@@ -850,7 +852,7 @@ ShowLauncher() {
     gearBtn := LauncherGui.Add("Text", "x380 y0 w20 h16 BackgroundD4DCE8 cGray Center +0x100", "⚙")
     gearBtn.SetFont("s10")
     gearBtn.OnEvent("Click", ShowLauncherSettingsMenu)
-    LauncherGui.Add("Text", "x400 y2 w60 h12 cGray", "v1.10.0").SetFont("s8")   ; 掴みしろの右隣にバージョン表示
+    LauncherGui.Add("Text", "x400 y2 w60 h12 cGray", "v1.11.0").SetFont("s8")   ; 掴みしろの右隣にバージョン表示
     LauncherGui.SetFont("s12")
     LauncherTab := LauncherGui.Add("Tab3", "x0 y16 w460 -Wrap",
         ["履歴 " . ClipHistory.Length, "定型文 " . Snippets.Length])
@@ -1019,7 +1021,7 @@ GetClipDib() {
 }
 
 CaptureClipImage() {
-    global LastUserCopyTick, LastLButtonUpTick, ClipUserWindowMs, ClipImageMaxBytes
+    global LastUserCopyTick, LastLButtonUpTick, ClipUserWindowMs, ClipImageMaxBytes, ClipImageMinPx
     now := A_TickCount
     if (now - LastUserCopyTick > ClipUserWindowMs) && (now - LastLButtonUpTick > ClipUserWindowMs)
         return
@@ -1029,6 +1031,8 @@ CaptureClipImage() {
     if (!dib || dib.Size < 40 || dib.Size > ClipImageMaxBytes)   ; 40=BITMAPINFOHEADER最小
         return
     w := NumGet(dib, 4, "Int"), h := Abs(NumGet(dib, 8, "Int"))  ; biWidth/biHeight(トップダウンは負)
+    if (w < ClipImageMinPx || h < ClipImageMinPx)                 ; 極小画像(意図しないノイズ)は弾く
+        return
     PushClipImage(dib, w, h)
 }
 
@@ -1042,8 +1046,12 @@ PushClipImage(dib, w, h) {
             ClipHistory.RemoveAt(i)           ; RemoveAtでBufferの参照が切れ自動解放される
             break                             ; 1回の追加で超過は最大1件
         }
-    while (ClipHistory.Length > ClipHistoryMax)
-        ClipHistory.Pop()
+    while (ClipHistory.Length > ClipHistoryMax) {
+        i := ClipHistory.Length
+        while (i >= 1 && ClipHistory[i].type = "image")   ; 末尾から見てテキストを優先的に間引く
+            i--
+        ClipHistory.RemoveAt(i > 0 ? i : ClipHistory.Length)
+    }
     ; 画像は検疫なし即保存(自動クリアはテキストのみ追跡するため対象外。D節参照)
     if (ClipArchiveImage && (dir := ArchiveSubDir("screenshot")) != "")
         SaveDibAsPng(dib, w, h, dir . "\img-" . FormatTime(, "yyyyMMdd-HHmmss") . ".png")
@@ -1114,10 +1122,12 @@ RebuildHistThumbILIfBloated() {
             v.DeleteProp("thumbIdx")
     EnsureHistThumbIL()
     if IsObject(SnipMgrHistLV)                ; 未生成なら0
-        SnipMgrHistLV.SetImageList(HistThumbIL, 1)
+        try SnipMgrHistLV.SetImageList(HistThumbIL, 1)
     if IsObject(LauncherGui) {                 ; 理論上の競合窓(通常はフォーカス喪失で閉済み)も塞ぐ
-        LauncherLvH.SetImageList(HistThumbIL, 1)
-        FillLauncherHistoryLV(LauncherLvH)    ; 旧indexを持つ行を貼り替え
+        try {
+            LauncherLvH.SetImageList(HistThumbIL, 1)
+            FillLauncherHistoryLV(LauncherLvH)    ; 旧indexを持つ行を貼り替え
+        }
     }
     DllCall("comctl32\ImageList_Destroy", "Ptr", old)   ; 再アサイン完了後に旧ILを破棄(この順序を守る)
 }
@@ -1323,9 +1333,11 @@ ShowSettingsWindow(*) {
 
     SettingsGui.Add("Button", "x20 y150 w150 h28", "保存フォルダを開く").OnEvent("Click", OpenArchiveDir)
     SettingsGui.Add("Button", "x290 y150 w100 h28", "閉じる").OnEvent("Click", (*) => SettingsGui.Hide())
+    ; ブランドロゴ: 他ウィンドウ(定型文の管理)と同じ流儀でフッターに控えめに配置。読み込み失敗は握りつぶす
+    try SettingsGui.Add("Picture", "x20 y188 w58 h36", A_ScriptDir . "\kimitolink-full-logo.png")
     SettingsGui.OnEvent("Close", (*) => SettingsGui.Hide())
     SettingsGui.OnEvent("Escape", (*) => SettingsGui.Hide())
-    SettingsGui.Show("w400 h190")
+    SettingsGui.Show("w400 h234")
 }
 
 ; 設定ウィンドウのチェックボックスから呼ばれる。ON時は警告→同意→トレイ側と同じ永続化。
@@ -1677,8 +1689,8 @@ StartupMenuLabel := StartupLabelFor(IsStartupRegistered())
 A_TrayMenu.Add(StartupMenuLabel, ToggleStartup)
 A_TrayMenu.Add("クリップボード監視を一時停止", ToggleClipWatch)
 A_TrayMenu.Add("クリップボード履歴を全削除", DeleteHistoryAll)
-A_TrayMenu.Add("定型文ファイルを編集 (snippets.ini)", EditSnippetsFile)
 A_TrayMenu.Add("定型文の管理...", ShowSnippetManager)
+A_TrayMenu.Add("定型文ファイルを編集 (snippets.ini)", EditSnippetsFile)   ; 上級者向け(生のiniを直接編集)。通常は上のGUIで足りる
 A_TrayMenu.Add()  ; セパレータ
 ; 非永続の原則の例外(既定OFF・オプトイン)。経緯は_docs/CLIPBOARD-HISTORY-FOLDER-ARCHIVE-DESIGN.md参照
 ; トレイ項目名だけでは何が起きるか分からないという声を受け、専用の設定ウィンドウに集約。
@@ -1686,7 +1698,7 @@ A_TrayMenu.Add("設定...", ShowSettingsWindow)
 A_TrayMenu.Add()  ; セパレータ
 A_TrayMenu.Add("設定フォルダを開く", (*) => Run('explorer.exe "' . A_ScriptDir . '"'))
 A_TrayMenu.Add()  ; セパレータ
-A_TrayMenu.Add("v1.10.0", (*) => 0), A_TrayMenu.Disable("v1.10.0")
+A_TrayMenu.Add("v1.11.0", (*) => 0), A_TrayMenu.Disable("v1.11.0")
 A_TrayMenu.Add()  ; セパレータ
 
 ; 初回起動時（スタートアップ未登録かつ確認未表示）は自動実行を促す
