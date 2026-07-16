@@ -1190,6 +1190,29 @@ EnsureHistThumbIL() {
         return
     HistThumbIL := DllCall("comctl32\ImageList_Create"
         , "Int", 48, "Int", 48, "UInt", 0x20, "Int", 4, "Int", 4, "Ptr")  ; ILC_COLOR32
+    AddBlankHistThumb()   ; 0番目=生成失敗時のプレースホルダ。呼び出し側の"Icon".(idx+1)式で-1→0が誤画像を指す事故を防ぐ
+}
+
+; サムネイル生成失敗(MakeHistThumbが-1)時の受け皿として、ImageList 0番目に無地(白)画像を1枚登録する。
+; MakeHistThumbと同じGDI確保・解放パターン(GetDC/CreateCompatibleDC/DeleteObject/DeleteDC/ReleaseDC)。
+AddBlankHistThumb() {
+    global HistThumbIL
+    hdcS := DllCall("GetDC", "Ptr", 0, "Ptr")
+    hdcM := DllCall("CreateCompatibleDC", "Ptr", hdcS, "Ptr")
+    hBmp := DllCall("CreateCompatibleBitmap", "Ptr", hdcS, "Int", 48, "Int", 48, "Ptr")
+    if (hdcM && hBmp) {
+        hOld := DllCall("SelectObject", "Ptr", hdcM, "Ptr", hBmp, "Ptr")
+        rc := Buffer(16), NumPut("Int", 0, rc, 0), NumPut("Int", 0, rc, 4)
+        NumPut("Int", 48, rc, 8), NumPut("Int", 48, rc, 12)
+        DllCall("FillRect", "Ptr", hdcM, "Ptr", rc, "Ptr", DllCall("GetStockObject", "Int", 0, "Ptr"))  ; WHITE_BRUSH
+        DllCall("SelectObject", "Ptr", hdcM, "Ptr", hOld, "Ptr")
+        DllCall("comctl32\ImageList_Add", "Ptr", HistThumbIL, "Ptr", hBmp, "Ptr", 0, "Int")
+    }
+    if hBmp
+        DllCall("DeleteObject", "Ptr", hBmp)
+    if hdcM
+        DllCall("DeleteDC", "Ptr", hdcM)
+    DllCall("ReleaseDC", "Ptr", 0, "Ptr", hdcS)
 }
 
 ; 孤児アイコン(履歴から間引かれても残り続けるImageList内の画像)によるメモリ肥大を防ぐ。
@@ -1498,9 +1521,11 @@ MakeHistThumb(v) {
     return idx
 }
 
-HistThumbIndex(v) {                        ; 生成は要素につき1回。以後はキャッシュ
+HistThumbIndex(v) {                        ; 生成は要素につき1回。以後はキャッシュ(失敗は再試行のためキャッシュしない)
     if !v.HasOwnProp("thumbIdx")
         v.thumbIdx := MakeHistThumb(v)
+    if (v.thumbIdx = -1)
+        v.DeleteProp("thumbIdx")           ; 次回オープン時に再試行(一時的なGDIリソース不足からの回復を期待)
     return v.thumbIdx
 }
 
