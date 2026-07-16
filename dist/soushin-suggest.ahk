@@ -6,7 +6,7 @@ CoordMode "Mouse", "Screen"
 ;  なぞってコピー・右クリック長押しで送信・サイドボタンでスクショ
 ;  Windows 10/11 対応・買い切り・追加課金なし
 ; ============================================================
-;  左クリック（ドラッグ）  -> 選択範囲を自動コピー（対応アプリのみ）
+;  左クリック（ドラッグ）  -> 選択範囲を自動コピー（全アプリ）
 ;  右クリック長押し(0.35s) -> サイトに合った送信キーを送る（短押しは通常の右クリック）
 ;  サイドボタン(戻る)      -> 短押し=全画面スクショ / 長押し=クイックペースト（全アプリ）
 ;  ミドルクリック           -> Git Bash を前面へ（無ければ起動）
@@ -188,9 +188,8 @@ ActivateGitBash() {
 
 ~LButton up:: {
     global CopyOnSelect, dragX, dragY, dragT, LastLButtonUpTick, LastUserCopyTick
-    if CopyOnSelectApp()                      ; 対象アプリでのクリックのみ「コピー由来」候補として記録
-        LastLButtonUpTick := A_TickCount      ; コンテキストメニュー由来のコピーを救う
-    if !CopyOnSelect || !CopyOnSelectApp()
+    LastLButtonUpTick := A_TickCount          ; コンテキストメニュー由来のコピーを救う(全アプリ対象)
+    if !CopyOnSelect
         return
     MouseGetPos &x, &y
     dt := A_TickCount - dragT
