@@ -3,12 +3,13 @@
 CoordMode "Mouse", "Screen"
 ; ============================================================
 ;  送信サジェスト / soushin-suggest.link
-;  なぞってコピー・右クリック長押しで送信・サイドボタンでスクショ
+;  なぞってコピー・右クリック長押しで送信・サイドボタンでスクショ&クイックペースト
 ;  Windows 10/11 対応・買い切り・追加課金なし
 ; ============================================================
 ;  左クリック（ドラッグ）  -> 選択範囲を自動コピー（全アプリ）
 ;  右クリック長押し(0.35s) -> サイトに合った送信キーを送る（短押しは通常の右クリック）
-;  サイドボタン(戻る)      -> 短押し=全画面スクショ / 長押し=クイックペースト（全アプリ）
+;  サイドボタン(戻る)      -> クイックペースト（全アプリ）
+;  サイドボタン(進む)      -> 短押し=全画面スクショ / 長押し=範囲指定スクショ
 ;  ミドルクリック           -> Git Bash を前面へ（無ければ起動）
 ;  Ctrl+Win+C              -> なぞってコピーのON/OFF切り替え
 ;  Ctrl+Win+V              -> クイックペーストを開く（マウスなしでも呼び出せる）
@@ -259,16 +260,21 @@ MButton::ActivateGitBash()
 ^#t::ActivateGitBash()
 ^#v::ShowLauncher()   ; キーボードからクイックペースト（Clibor風・アプリを問わず有効）
 
-; --- サイドボタン(戻る): 短押し=スクショ / 長押し=クイックペースト（全アプリ） ---
-XButton1:: {
+; --- サイドボタン(戻る): 押すとすぐクイックペースト（全アプリ・長押し判定なし） ---
+XButton1::ShowLauncher()
+
+; --- サイドボタン(進む): 短押し=カーソルのモニタを全画面スクショ / 長押し=範囲指定スクショ ---
+XButton2:: {
     global LongPressSec, LastUserCopyTick
-    if KeyWait("XButton1", "T" . LongPressSec) {
+    if KeyWait("XButton2", "T" . LongPressSec) {
         LastUserCopyTick := A_TickCount        ; 自スクリプト発のSendはフックに乗らないため明示記録
-        Send("#{PrintScreen}")
+        if !CaptureMonitorAtCursorToClipboard()
+            Send("#{PrintScreen}")             ; 自前キャプチャ失敗時は従来のWin+PrintScreenへフォールバック
         return
     }
-    KeyWait("XButton1")
-    ShowLauncher()
+    KeyWait("XButton2")
+    LastUserCopyTick := A_TickCount            ; Win+Shift+Sのクリップボードコピーもユーザー操作として認める
+    Send("#+s")                                ; Windows標準の切り取り&スケッチ(範囲指定)
 }
 
 ; PrintScreen(全画面/Alt+PrintScreenでアクティブウィンドウ)によるコピーもユーザー操作として認める
@@ -851,7 +857,7 @@ ShowLauncher() {
     gearBtn := LauncherGui.Add("Text", "x380 y0 w20 h16 BackgroundD4DCE8 cGray Center +0x100", "⚙")
     gearBtn.SetFont("s10")
     gearBtn.OnEvent("Click", ShowLauncherSettingsMenu)
-    LauncherGui.Add("Text", "x400 y2 w60 h12 cGray", "v1.11.0").SetFont("s8")   ; 掴みしろの右隣にバージョン表示
+    LauncherGui.Add("Text", "x400 y2 w60 h12 cGray", "v1.12.0").SetFont("s8")   ; 掴みしろの右隣にバージョン表示
     LauncherGui.SetFont("s12")
     LauncherTab := LauncherGui.Add("Tab3", "x0 y16 w460 -Wrap",
         ["履歴 " . ClipHistory.Length, "定型文 " . Snippets.Length])
@@ -1089,6 +1095,86 @@ PasteImage(dib) {
         WinActivate("ahk_id " . LauncherTarget)
     Sleep 150
     Send("^v")
+}
+
+; --- カーソルがあるモニタだけの全画面スクショ（マルチモニタ対応） ---
+; MonitorFromPointはPOINT構造体(x,yの8バイト)を1つの値として渡す必要がある。
+; MONITOR_DEFAULTTONEAREST(=2)により、境界値でも必ずどこかのモニタを返す(fail-safe)。
+MonitorRectAtCursor() {
+    MouseGetPos(&mx, &my)
+    pt := Buffer(8, 0)
+    NumPut("Int", mx, pt, 0), NumPut("Int", my, pt, 4)
+    hMon := DllCall("MonitorFromPoint", "Int64", NumGet(pt, 0, "Int64"), "UInt", 2, "Ptr")
+    if !hMon
+        return 0
+    mi := Buffer(40, 0)                       ; MONITORINFO構造体
+    NumPut("UInt", 40, mi, 0)                 ; cbSize(事前セット必須)
+    if !DllCall("GetMonitorInfo", "Ptr", hMon, "Ptr", mi)
+        return 0
+    l := NumGet(mi, 4, "Int"), t := NumGet(mi, 8, "Int")   ; rcMonitor(offset 4-19)
+    r := NumGet(mi, 12, "Int"), b := NumGet(mi, 16, "Int")
+    return {l: l, t: t, r: r, b: b, w: r - l, h: b - t}
+}
+
+; 指定矩形(スクリーン座標)をBitBltでキャプチャしCF_DIB形式のBufferを返す。失敗時は0。
+; SaveDibAsPngと同じGDIハンドル確保・解放パターン(GetDC/CreateCompatibleDC/SelectObject退避復帰)。
+CaptureRectToDib(l, t, w, h) {
+    hdcScreen := DllCall("GetDC", "Ptr", 0, "Ptr")
+    if !hdcScreen
+        return 0
+    hdcMem := DllCall("CreateCompatibleDC", "Ptr", hdcScreen, "Ptr")
+    bi := Buffer(40, 0)                       ; BITMAPINFOHEADER
+    NumPut("UInt", 40, bi, 0), NumPut("Int", w, bi, 4), NumPut("Int", -h, bi, 8)   ; 負=トップダウン
+    NumPut("UShort", 1, bi, 12), NumPut("UShort", 32, bi, 14), NumPut("UInt", 0, bi, 16)
+    hBmp := DllCall("CreateDIBSection", "Ptr", hdcScreen, "Ptr", bi, "UInt", 0
+        , "Ptr*", &pBits := 0, "Ptr", 0, "UInt", 0, "Ptr")
+    ok := false
+    if (hdcMem && hBmp && pBits) {
+        hOld := DllCall("SelectObject", "Ptr", hdcMem, "Ptr", hBmp, "Ptr")
+        ok := DllCall("BitBlt", "Ptr", hdcMem, "Int", 0, "Int", 0, "Int", w, "Int", h
+            , "Ptr", hdcScreen, "Int", l, "Int", t, "UInt", 0x00CC0020)   ; SRCCOPY
+        DllCall("SelectObject", "Ptr", hdcMem, "Ptr", hOld, "Ptr")
+    }
+    dib := 0
+    if ok {                                   ; SetClipboardImageが期待する「ヘッダ+ピクセル連続」形式に詰め直す
+        rowBytes := w * 4
+        dib := Buffer(40 + rowBytes * h)
+        DllCall("RtlMoveMemory", "Ptr", dib, "Ptr", bi, "UPtr", 40)
+        DllCall("RtlMoveMemory", "Ptr", dib.Ptr + 40, "Ptr", pBits, "UPtr", rowBytes * h)
+        ; BitBltはアルファチャンネルを埋めないため0(透明)のまま残ることがある。
+        ; CF_DIBに厳密なアルファ意味はなく、貼り付け先が透明=無描画と解釈する事故を防ぐため255で強制する。
+        px := dib.Ptr + 40
+        Loop w * h
+            NumPut("UChar", 255, px, (A_Index - 1) * 4 + 3)
+    }
+    if hBmp
+        DllCall("DeleteObject", "Ptr", hBmp)
+    if hdcMem
+        DllCall("DeleteDC", "Ptr", hdcMem)
+    DllCall("ReleaseDC", "Ptr", 0, "Ptr", hdcScreen)
+    return dib
+}
+
+CaptureMonitorAtCursorToClipboard() {
+    rect := MonitorRectAtCursor()
+    if !IsObject(rect)
+        return false
+    dib := CaptureRectToDib(rect.l, rect.t, rect.w, rect.h)
+    if !dib
+        return false
+    ok := SetClipboardImage(dib)
+    if ok
+        FlashScreenRect(rect.l, rect.t, rect.w, rect.h)   ; Win+PrintScreenの暗転演出を模倣(撮影後なので画質に影響しない)
+    return ok
+}
+
+; 指定モニタ矩形を一瞬だけ黒くフラッシュさせる(Win+PrintScreen風の撮影フィードバック)
+FlashScreenRect(l, t, w, h) {
+    g := Gui("-Caption +ToolWindow +AlwaysOnTop +E0x20")   ; E0x20=WS_EX_TRANSPARENT(クリック等を素通し)
+    g.BackColor := "000000"
+    WinSetTransparent(120, g)
+    g.Show("x" . l . " y" . t . " w" . w . " h" . h . " NoActivate")
+    SetTimer(() => g.Destroy(), -120)
 }
 
 ; --- 画像履歴の実サムネイル表示（「定型文の管理」の履歴タブのみ。ランチャーのListBoxは非対応） ---
@@ -1697,7 +1783,7 @@ A_TrayMenu.Add("設定...", ShowSettingsWindow)
 A_TrayMenu.Add()  ; セパレータ
 A_TrayMenu.Add("設定フォルダを開く", (*) => Run('explorer.exe "' . A_ScriptDir . '"'))
 A_TrayMenu.Add()  ; セパレータ
-A_TrayMenu.Add("v1.11.0", (*) => 0), A_TrayMenu.Disable("v1.11.0")
+A_TrayMenu.Add("v1.12.0", (*) => 0), A_TrayMenu.Disable("v1.12.0")
 A_TrayMenu.Add()  ; セパレータ
 
 ; 初回起動時（スタートアップ未登録かつ確認未表示）は自動実行を促す
