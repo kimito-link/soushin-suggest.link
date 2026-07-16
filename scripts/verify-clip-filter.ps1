@@ -107,5 +107,9 @@ if (-not ($accepted | Where-Object { $_ -like '*user-copy-marker*' })) {
 Write-Output 'PASS user-copy tick accepted'
 
 Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
+if (-not $env:SS_DEBUG_KEEP_STAGE) {
+    Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
+} else {
+    Write-Output "DEBUG: stage kept at $stage"
+}
 Write-Output 'OK Phase1 security probe'

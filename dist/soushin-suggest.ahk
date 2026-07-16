@@ -1,6 +1,13 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
 CoordMode "Mouse", "Screen"
+; コンパイル後もWindows 10/11のトースト通知はAutoHotkey本体のAUMID("AutoHotkey.AutoHotkey")に
+; 紐づく既定アイコン(緑のH)を出す。自前のAUMIDを明示登録することで通知側にも自分のアイデンティティを持たせる。
+DllCall("shell32\SetCurrentProcessExplicitAppUserModelID", "wstr", "KimitoLink.SoushinSuggest")
+; .ahk直接実行(開発時・検証プローブ)ではexeのアイコンリソースが存在せずTraySetIconのリソース指定が失敗し、
+; それ以降の自動実行(OnClipboardChange登録等)まで巻き込んで壊れることを実測で確認したためコンパイル時のみ実行。
+if A_IsCompiled
+    TraySetIcon(A_ScriptFullPath, 1)   ; トレイアイコンの明示指定(リソース1番=Ahk2Exeのメインアイコン)
 ; ============================================================
 ;  送信サジェスト / soushin-suggest.link
 ;  なぞってコピー・右クリック長押しで送信・サイドボタンでスクショ&クイックペースト
@@ -16,6 +23,7 @@ CoordMode "Mouse", "Screen"
 ;  対応アプリ・送信ルールは sites.ini、定型文は snippets.ini で編集できます（同梱）。
 ;  トレイのアイコンを右クリック -> Suspend Hotkeys / Exit
 
+global AppVersion := "1.12.0"
 global CopyOnSelect := true, dragX := 0, dragY := 0, dragT := 0
 global SitesConfig := Map()
 global SiteRules := []
@@ -132,6 +140,70 @@ global StartupMenuLabel := ""
 StartupShortcutPath() => A_Startup . "\soushin-suggest.lnk"
 IsStartupRegistered() => FileExist(StartupShortcutPath()) ? true : false
 StartupLabelFor(registered) => registered ? "Windows起動時に自動実行: ON" : "Windows起動時に自動実行: OFF"
+
+; --- スタートメニューへのAUMID付きショートカット登録 ---
+; Windows 10/11のトースト通知(TrayTip)は、コンパイル済みexeがAutoHotkey本体のAUMID
+; ("AutoHotkey.AutoHotkey")にフォールバックすると既定のAutoHotkeyアイコンを出す。
+; SetCurrentProcessExplicitAppUserModelID単体では通知アイコンは解決されず、
+; 「スタートメニューに、そのAUMIDを持つショートカットが存在する」ことが必要
+; (Microsoft Learn: How to enable desktop toast notifications through an AppUserModelID)。
+; 実装はAutoHotkey v2公式インストーラーのUX\inc\CreateAppShortcut.ahkを踏襲。
+global AppAumid := "KimitoLink.SoushinSuggest"
+StartMenuShortcutPath() => A_AppData . "\Microsoft\Windows\Start Menu\Programs\送信サジェスト.lnk"
+
+; 既存ショートカットのIconLocationが想定と違えば再作成する(過去の試行錯誤で不完全なショートカットが
+; 残っている環境の自己修復も兼ねる。FileExistだけの判定だと一度不完全な状態で作られると直らない)。
+EnsureStartMenuShortcut() {
+    global AppAumid
+    if !A_IsCompiled   ; .ahk直接実行(開発時・検証プローブ)ではexeにアイコンが埋め込まれていないためスキップ
+        return
+    path := StartMenuShortcutPath()
+    wantIcon := A_ScriptFullPath . ",0"
+    if FileExist(path) {
+        try {
+            sh := ComObject("WScript.Shell")
+            lnk := sh.CreateShortcut(path)
+            if (lnk.IconLocation = wantIcon)
+                return
+        } catch {
+            ; 読み取り失敗時は下のtryで再作成を試みる
+        }
+    }
+    try CreateAppShortcut(path, {target: A_ScriptFullPath, desc: "送信サジェスト", aumid: AppAumid, icon: A_ScriptFullPath, iconIndex: 0})
+}
+
+; AutoHotkey v2公式インストーラー(AutoHotkeyUX/inc/CreateAppShortcut.ahk)からの移植。
+; IShellLinkでショートカット本体を組み立て、IPropertyStore経由でSystem.AppUserModel.IDを埋め込む。
+CreateAppShortcut(linkFile, p) {
+    lnk := ComObject("{00021401-0000-0000-C000-000000000046}", "{000214F9-0000-0000-C000-000000000046}")   ; CLSID/IID_IShellLink
+    ComCall(20, lnk, "wstr", p.target)                                          ; SetPath
+    ComCall(11, lnk, "wstr", p.HasProp("args") ? p.args : "")                   ; SetArguments
+    ComCall(7, lnk, "wstr", p.desc)                                             ; SetDescription
+    if p.HasProp("icon")
+        ComCall(17, lnk, "wstr", p.icon, "int", p.HasProp("iconIndex") ? p.iconIndex : 0)   ; SetIconLocation
+
+    props := ComObjQuery(lnk, "{886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99}")         ; IPropertyStore
+    pkeyAumid := AhkPropKey("{9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3}", 5)        ; PKEY_AppUserModel_ID
+    AhkPropSet(props, pkeyAumid, p.aumid)
+
+    pf := ComObjQuery(lnk, "{0000010B-0000-0000-C000-000000000046}")           ; IPersistFile
+    ComCall(6, pf, "wstr", linkFile, "int", true)                              ; Save
+}
+
+AhkPropSet(props, key, value) {
+    propvar := Buffer(24, 0)
+    propref := ComValue(0x400C, propvar.Ptr)   ; VT_BYREF|VT_VARIANT。この後 propref[] への代入でBSTRとして値が書き込まれる
+    propref[] := String(value)
+    ComCall(6, props, "ptr", key, "ptr", propvar)   ; IPropertyStore::SetValue
+    propref[] := 0
+}
+
+AhkPropKey(sguid, propID) {
+    pk := Buffer(20)
+    DllCall("ole32\IIDFromString", "wstr", sguid, "ptr", pk, "hresult")
+    NumPut("int", propID, pk, 16)
+    return pk
+}
 
 EnableStartup() {
     try FileCreateShortcut(A_ScriptFullPath, StartupShortcutPath(), A_ScriptDir), Flash("次回のWindows起動時から自動で立ち上がります", 1800)
@@ -842,7 +914,7 @@ SnipMgrImport(*) {
 }
 
 ShowLauncher() {
-    global ClipHistory, LauncherGui, LauncherTarget, Snippets, LauncherTab, LauncherDragBar, LauncherLvH, LauncherLbS, LauncherHoverLast, ClipWatchOn
+    global ClipHistory, LauncherGui, LauncherTarget, Snippets, LauncherTab, LauncherDragBar, LauncherLvH, LauncherLbS, LauncherHoverLast, ClipWatchOn, AppVersion
     Snippets := LoadSnippets()                ; 開くたびに読む: iniを編集→次の長押しで即反映
     if (ClipHistory.Length = 0 && Snippets.Length = 0) {
         Flash("履歴がありません（コピーすると貯まります）", 1800)
@@ -857,7 +929,7 @@ ShowLauncher() {
     gearBtn := LauncherGui.Add("Text", "x380 y0 w20 h16 BackgroundD4DCE8 cGray Center +0x100", "⚙")
     gearBtn.SetFont("s10")
     gearBtn.OnEvent("Click", ShowLauncherSettingsMenu)
-    LauncherGui.Add("Text", "x400 y2 w60 h12 cGray", "v1.12.0").SetFont("s8")   ; 掴みしろの右隣にバージョン表示
+    LauncherGui.Add("Text", "x400 y2 w60 h12 cGray", "v" . AppVersion).SetFont("s8")   ; 掴みしろの右隣にバージョン表示
     LauncherGui.SetFont("s12")
     LauncherTab := LauncherGui.Add("Tab3", "x0 y16 w460 -Wrap",
         ["履歴 " . ClipHistory.Length, "定型文 " . Snippets.Length])
@@ -1792,6 +1864,7 @@ HotIf (*) => IsObject(LauncherGui) && WinActive("ahk_id " . LauncherGui.Hwnd)
 Loop 10
     Hotkey Mod(A_Index, 10) . "", LauncherPickKey
 HotIf
+EnsureStartMenuShortcut()   ; トースト通知アイコンのためのAUMID登録(TrayTipより前に実行する必要がある)
 TrayTip("送信サジェスト", "常駐を開始しました", "Mute")
 
 ; トレイメニューに自動起動のON/OFF・監視トグル・バージョン表示を追加
@@ -1808,7 +1881,7 @@ A_TrayMenu.Add("設定...", ShowSettingsWindow)
 A_TrayMenu.Add()  ; セパレータ
 A_TrayMenu.Add("設定フォルダを開く", (*) => Run('explorer.exe "' . A_ScriptDir . '"'))
 A_TrayMenu.Add()  ; セパレータ
-A_TrayMenu.Add("v1.12.0", (*) => 0), A_TrayMenu.Disable("v1.12.0")
+A_TrayMenu.Add("v" . AppVersion, (*) => 0), A_TrayMenu.Disable("v" . AppVersion)
 A_TrayMenu.Add()  ; セパレータ
 
 ; 初回起動時（スタートアップ未登録かつ確認未表示）は自動実行を促す
