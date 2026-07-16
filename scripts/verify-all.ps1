@@ -8,6 +8,7 @@ $probes = @(
     'verify-clip-filter.ps1'
     'verify-archive-quarantine.ps1'
     'verify-clibor-import.ps1'
+    'verify-diagnostics.ps1'
 )
 
 foreach ($probe in $probes) {
