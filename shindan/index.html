@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- 送信機能の機械的封印: 接続先ゼロ・外部スクリプトゼロをブラウザに強制させる -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<meta name="robots" content="noindex">
+<title>送信サジェスト 診断ビューア</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body {
+    font-family: "Meiryo UI", "Hiragino Kaku Gothic ProN", sans-serif;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 16px;
+    line-height: 1.6;
+    background: #f5f7fa;
+    color: #1a1a1a;
+  }
+  header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  header h1 { font-size: 20px; margin: 0; }
+  #verMeta { color: #666; font-size: 13px; }
+  .card {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 12px;
+  }
+  .card.intro { background: #eef6ff; border-color: #bcdcff; font-size: 14px; }
+  #input { margin-bottom: 12px; }
+  #paste {
+    width: 100%;
+    min-height: 90px;
+    padding: 10px;
+    font-size: 13px;
+    border: 2px dashed #99a;
+    border-radius: 8px;
+    resize: vertical;
+  }
+  #btnRender {
+    margin-top: 8px;
+    padding: 8px 16px;
+    border: none;
+    border-radius: 6px;
+    background: #4a6fd1;
+    color: #fff;
+    cursor: pointer;
+    font-size: 14px;
+  }
+  .verdict {
+    font-size: 15px;
+    font-weight: bold;
+    padding: 14px 16px;
+    border-radius: 8px;
+    margin-bottom: 8px;
+  }
+  .verdict.red { background: #ffe3e3; color: #a80000; border: 1px solid #f5a3a3; }
+  .verdict.yellow { background: #fff6d8; color: #7a5c00; border: 1px solid #f0d878; }
+  .verdict.green { background: #e2f7e6; color: #146c2e; border: 1px solid #a7e3b3; }
+  .verdict.gray { background: #eee; color: #555; border: 1px solid #ccc; }
+  .verdict-note { font-size: 13px; color: #666; margin: -4px 0 12px; }
+  .share {
+    display: block;
+    width: 100%;
+    padding: 12px;
+    margin-bottom: 20px;
+    border: none;
+    border-radius: 8px;
+    background: linear-gradient(90deg, #ff7a59, #ff5c8a);
+    color: #fff;
+    font-weight: bold;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  main section { margin-bottom: 20px; }
+  main h2 { font-size: 15px; margin: 0 0 8px; color: #333; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+  .kcard {
+    border-radius: 8px;
+    padding: 10px 12px;
+    border: 1px solid #ddd;
+    background: #fafafa;
+  }
+  .kcard .label { font-size: 12px; color: #555; }
+  .kcard .value { font-size: 18px; font-weight: bold; margin: 2px 0; }
+  .kcard .msg { font-size: 12px; color: #444; margin-top: 4px; }
+  .kcard.red { background: #ffe3e3; border-color: #f5a3a3; }
+  .kcard.yellow { background: #fff6d8; border-color: #f0d878; }
+  .kcard.green { background: #e2f7e6; border-color: #a7e3b3; }
+  .kcard.gray { background: #f0f0f0; border-color: #ddd; color: #888; }
+  .kcard.gray .value { color: #aaa; }
+  #privacy { font-size: 13px; color: #444; }
+  #privacy b { color: #111; }
+  #privacy ul { margin: 6px 0; padding-left: 20px; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #14161a; color: #e6e6e6; }
+    .card { background: #1e2127; border-color: #333; }
+    .card.intro { background: #17263a; border-color: #2a4a6e; }
+    #paste { background: #1a1c20; color: #e6e6e6; border-color: #556; }
+    .kcard { background: #1a1c20; border-color: #333; }
+    .kcard.gray { background: #22252b; color: #888; }
+    #privacy { color: #ccc; }
+    #privacy b { color: #fff; }
+    #verMeta { color: #999; }
+    main h2 { color: #ccc; }
+  }
+</style>
+</head>
+<body>
+  <header>
+    <h1>送信サジェスト 状態</h1>
+    <span id="verMeta">— 貼り付けるとバージョンが表示されます —</span>
+  </header>
+
+  <section id="intro" class="card intro">
+    <p>🔒 このページは貼り付けた内容を<b>どこにも送信しません</b>。すべてこのブラウザの中だけで処理します。</p>
+    <p><b>使い方</b>: ① タスクトレイの送信サジェストのアイコンを右クリック→「診断情報をコピー」を押す
+       ② 下の枠をクリックして Ctrl+V ③ 結果を見る（AIに相談するときは下に出る「AIに相談」ボタンを押して貼るだけ）</p>
+  </section>
+
+  <section id="input">
+    <textarea id="paste" placeholder='ここに Ctrl+V（例: {"app":"soushin-suggest",...}）'></textarea>
+    <button id="btnRender">表示する</button>
+  </section>
+
+  <div id="verdict" class="verdict gray">まだ何も貼り付けられていません</div>
+  <p id="verdictNote" class="verdict-note" hidden></p>
+  <button id="btnShare" class="share" hidden>この結果をコピーしてAIに相談（原因が全部わかる1枚）</button>
+
+  <main id="cards" hidden>
+    <section data-sec="state"><h2>いまの状態</h2><div class="grid"></div></section>
+    <section data-sec="imgFunnel"><h2>画像の通り道（コピー→履歴）</h2><div class="grid"></div></section>
+    <section data-sec="shot"><h2>スクショ直行便（サイドボタン）</h2><div class="grid"></div></section>
+    <section data-sec="textFunnel"><h2>テキストの通り道</h2><div class="grid"></div></section>
+    <section data-sec="other"><h2>その他の観測値</h2><div class="grid"></div></section>
+  </main>
+
+  <section id="privacy" class="card">
+    <b>🔒 プライバシー</b>
+    <ul>
+      <li>貼り付けた内容は<b>このブラウザの中だけ</b>で処理されます。サーバーへの送信は行いません——このページには<b>送信するコード自体が存在しません</b>（通信を全面禁止するCSP設定入り。開発者ツールのNetworkタブで検証できます）。</li>
+      <li>保存もしません。ページを閉じれば消えます（Cookie・localStorage不使用）。</li>
+      <li>そもそも診断JSONにはカウンターと設定値しか入っておらず、コピーした文章・画像・アプリ名は含まれません（アプリ側の仕様）。</li>
+    </ul>
+  </section>
+
+<script>
+(function () {
+  'use strict';
+
+  // sec: 表示セクション / label: 人間向け名 / kind: 'ok'(伸びてよい) | 'rej'(却下) | 'info'
+  var KEY_REGISTRY = {
+    selfSuppress:  { sec: 'imgFunnel',  label: '自己書込の抑制',        kind: 'info' },
+    evtImage:      { sec: 'imgFunnel',  label: '画像コピーを検知',       kind: 'ok' },
+    capImage:      { sec: 'imgFunnel',  label: '画像の取り込み実行',     kind: 'ok' },
+    pushImage:     { sec: 'imgFunnel',  label: '画像が履歴に登録',       kind: 'ok' },
+    rejUserImage:  { sec: 'imgFunnel',  label: '却下: 操作なしコピー',   kind: 'rej' },
+    rejSource:     { sec: 'imgFunnel',  label: '却下: 除外アプリから',   kind: 'rej' },
+    rejDib:        { sec: 'imgFunnel',  label: '却下: 画像データ取得失敗', kind: 'rej' },
+    rejSize:       { sec: 'imgFunnel',  label: '却下: サイズ上限超過',   kind: 'rej' },
+    rejMinPx:      { sec: 'imgFunnel',  label: '却下: 画像が小さすぎ',   kind: 'rej' },
+    shotDirect:    { sec: 'shot',       label: 'スクショ直接登録 成功',  kind: 'ok' },
+    shotDirectRej: { sec: 'shot',       label: 'スクショ直接登録 却下',  kind: 'rej' },
+    shotFail:      { sec: 'shot',       label: 'スクショ撮影 失敗',      kind: 'rej' },
+    evtText:       { sec: 'textFunnel', label: 'テキストコピーを検知',   kind: 'ok' },
+    capText:       { sec: 'textFunnel', label: 'テキストの取り込み実行', kind: 'ok' },
+    pushText:      { sec: 'textFunnel', label: 'テキストが履歴に登録',   kind: 'ok' },
+    rejUserText:   { sec: 'textFunnel', label: '却下: 操作なしコピー',   kind: 'rej' },
+    rejEmptyLong:  { sec: 'textFunnel', label: '却下: 空または長すぎ',   kind: 'rej' },
+    evtClear:      { sec: 'other',      label: 'クリップボードのクリア', kind: 'info' },
+    watchOff:      { sec: 'other',      label: '監視オフ中に捨てた数',   kind: 'info' },
+    ignoreFormat:  { sec: 'other',      label: 'パスワード形式を除外',   kind: 'info' }
+  };
+
+  var RECENT_MS = 10000;
+
+  var $paste = document.getElementById('paste');
+  var $btnRender = document.getElementById('btnRender');
+  var $verdict = document.getElementById('verdict');
+  var $verdictNote = document.getElementById('verdictNote');
+  var $btnShare = document.getElementById('btnShare');
+  var $cards = document.getElementById('cards');
+  var $verMeta = document.getElementById('verMeta');
+
+  // AIチャット等から前後の文章ごと貼られても救う: 最初の '{' から括弧バランスで切り出す
+  function extractJson(text) {
+    var s = text.indexOf('{');
+    if (s < 0) return { err: 'JSONが見つかりません。トレイメニューの「診断情報をコピー」を押してから貼り付けてください。' };
+    var depth = 0;
+    for (var i = s; i < text.length; i++) {
+      if (text[i] === '{') depth++;
+      else if (text[i] === '}') {
+        depth--;
+        if (depth === 0) {
+          try {
+            return { obj: JSON.parse(text.slice(s, i + 1)) };
+          } catch (e) {
+            return { err: 'JSONの形が崩れています。もう一度コピーし直してください。' };
+          }
+        }
+      }
+    }
+    return { err: 'JSONが途中で切れています。全文をコピーし直してください。' };
+  }
+
+  function c(counters, key) {
+    return (counters && Object.prototype.hasOwnProperty.call(counters, key)) ? counters[key] : null;
+  }
+
+  function fmtAgo(ms) {
+    if (ms < 1000) return ms + 'ms前';
+    return Math.round(ms / 1000) + '秒前';
+  }
+
+  function fmtUptime(ms) {
+    var s = Math.floor(ms / 1000);
+    var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    if (h > 0) return h + '時間' + m + '分';
+    if (m > 0) return m + '分' + sec + '秒';
+    return sec + '秒';
+  }
+
+  // カウンターキー1つを既定のカード情報(色未確定=gray)に変換する。判定ルールが上書きする。
+  function baseCard(key, counter) {
+    var reg = KEY_REGISTRY[key];
+    if (!counter) {
+      return { id: key, label: reg ? reg.label : key, value: '—', level: 'gray',
+               message: 'まだ観測なし（0回とは限りません。実際に起きたことだけを数えているため、この版で計測されていないだけの可能性もあります）',
+               short: null };
+    }
+    var level = reg && reg.kind === 'rej' ? 'yellow' : (reg && reg.kind === 'ok' ? 'green' : 'gray');
+    return {
+      id: key,
+      label: reg ? reg.label : key,
+      value: counter.n + '回',
+      level: level,
+      message: (reg ? reg.label : key) + ' ' + counter.n + '回（最後は' + fmtAgo(counter.agoMs) + '）',
+      short: null
+    };
+  }
+
+  // C-4の判定表を適用してカード配列を作る。既知キーは observed の有無に関わらず全部出す(D節: 緑は加点式)。
+  function buildCards(snapshot) {
+    var counters = snapshot.counters || {};
+    var cfg = snapshot.cfg || {};
+    var cardsByKey = {};
+    Object.keys(KEY_REGISTRY).forEach(function (key) {
+      cardsByKey[key] = baseCard(key, c(counters, key));
+    });
+
+    // R1: スクショ自己抑制の疑い
+    var selfSup = c(counters, 'selfSuppress');
+    var shotDirect = c(counters, 'shotDirect');
+    var pushImage = c(counters, 'pushImage');
+    if (selfSup && selfSup.agoMs < RECENT_MS) {
+      var shotNewer = shotDirect && shotDirect.agoMs <= selfSup.agoMs;
+      var pushNewer = pushImage && pushImage.agoMs <= selfSup.agoMs;
+      if (!shotNewer && !pushNewer) {
+        cardsByKey.selfSuppress.level = 'red';
+        cardsByKey.selfSuppress.message = '直近のクリップボード書込が自己抑制で破棄され、履歴に載っていません。サイドボタンのスクショが履歴に残らない典型症状です。';
+        cardsByKey.selfSuppress.short = 'スクショ自己抑制の疑い';
+      } else {
+        cardsByKey.selfSuppress.level = 'green';
+        cardsByKey.selfSuppress.message = '自己書込の抑制 ' + selfSup.n + '回 — 貼り付け・診断コピー由来の正常な動作です。';
+      }
+    }
+
+    // R2: 撮影失敗
+    var shotFail = c(counters, 'shotFail');
+    if (shotFail && shotFail.n > 0) {
+      cardsByKey.shotFail.level = 'red';
+      cardsByKey.shotFail.message = 'スクリーンショットの撮影自体が ' + shotFail.n + '回 失敗しています（マルチモニタ構成の変更直後などに発生）。';
+      cardsByKey.shotFail.short = '撮影失敗';
+    }
+
+    // R3: 監視オフ（状態セクションに合成カードとして追加）。
+    // watchOn=trueは「悪い証拠が無い」だけの設定表示であり「成功の証拠」ではないため、
+    // ONのときは判定材料(countInVerdict)に含めない。OFFのときだけ赤として集計対象にする(D節: 緑は加点式)。
+    var stateCards = [];
+    stateCards.push({
+      id: 'watchOn', label: 'クリップボード監視', value: snapshot.watchOn ? 'ON' : 'OFF',
+      level: snapshot.watchOn ? 'gray' : 'red',
+      message: snapshot.watchOn ? '監視は有効です' : 'クリップボード監視がオフです。トレイメニューから監視を再開してください（履歴に載らない直接原因）。',
+      short: snapshot.watchOn ? null : '監視オフ',
+      countInVerdict: !snapshot.watchOn
+    });
+    stateCards.push({ id: 'histLen', label: '現在の履歴件数', value: snapshot.histLen + '件', level: 'gray', message: '', short: null, countInVerdict: false });
+    stateCards.push({ id: 'uptime', label: '稼働時間', value: fmtUptime(snapshot.uptimeMs), level: 'gray', message: '', short: null, countInVerdict: false });
+
+    // R4: 理由なき消失（計測漏れ/未知経路）
+    var capImage = c(counters, 'capImage');
+    var imgRejKeys = ['rejUserImage', 'rejSource', 'rejDib', 'rejSize', 'rejMinPx'];
+    var hasImgRej = imgRejKeys.some(function (k) { return c(counters, k); });
+    if (capImage && capImage.n > 0 && !pushImage && !hasImgRej) {
+      stateCards.push({
+        id: 'r4', label: '整合性チェック', value: '⚠', level: 'red',
+        message: '画像の取り込みは実行されたのに、履歴登録も却下理由も記録されていません。計測漏れか未知の経路の可能性があります（バグとして報告してください）。',
+        short: '理由なき消失',
+        countInVerdict: true
+      });
+    }
+
+    // Y1: スクショ直接登録の却下
+    var shotDirectRej = c(counters, 'shotDirectRej');
+    if (shotDirectRej && shotDirectRej.n > 0) {
+      cardsByKey.shotDirectRej.level = 'yellow';
+      cardsByKey.shotDirectRej.message = 'スクショが ' + shotDirectRej.n + '回、サイズ制限（上限 ' + (cfg.imgMaxMB || '?') + 'MB・最小 ' + (cfg.imgMinPx || '?') + 'px）で履歴に登録されませんでした。クリップボードには載っています。';
+      cardsByKey.shotDirectRej.short = 'スクショがサイズ制限で却下';
+    }
+
+    // Y2/Y3: 却下系はkind='rej'により既定でyellow。ラベルに理由を含む一言を追加
+    imgRejKeys.concat(['rejUserText', 'rejEmptyLong']).forEach(function (key) {
+      var v = c(counters, key);
+      if (v && v.n > 0) {
+        var extra = key === 'rejSource' ? '（除外元アプリの設定 sites.ini を確認してください）' : '';
+        cardsByKey[key].message = (KEY_REGISTRY[key].label) + ' が ' + v.n + '回 発生しています。' + extra;
+        cardsByKey[key].short = KEY_REGISTRY[key].label;
+      }
+    });
+
+    // watchOff: 過去に監視オフの期間があった場合の注記
+    var watchOff = c(counters, 'watchOff');
+    if (watchOff && watchOff.n > 0 && snapshot.watchOn) {
+      cardsByKey.watchOff.level = 'yellow';
+      cardsByKey.watchOff.message = '過去に監視オフの期間があり ' + watchOff.n + '件 取りこぼしています。';
+      cardsByKey.watchOff.short = '監視オフ期間の取りこぼし';
+    }
+
+    var sections = { state: stateCards, imgFunnel: [], shot: [], textFunnel: [], other: [] };
+    Object.keys(cardsByKey).forEach(function (key) {
+      var reg = KEY_REGISTRY[key];
+      sections[reg.sec].push(cardsByKey[key]);
+    });
+
+    return sections;
+  }
+
+  function aggregate(sections) {
+    var all = [].concat(sections.state, sections.imgFunnel, sections.shot, sections.textFunnel, sections.other);
+    // countInVerdict===falseの純情報カード(履歴件数・稼働時間・監視ON時のwatchOn等)は
+    // 「悪い証拠が無いだけ」なので集計対象から除く。未指定(KEY_REGISTRY由来)はtrue扱い。
+    var counted = all.filter(function (c) { return c.countInVerdict !== false; });
+    var reds = counted.filter(function (c) { return c.level === 'red'; });
+    var yellows = counted.filter(function (c) { return c.level === 'yellow'; });
+    var greens = counted.filter(function (c) { return c.level === 'green'; });
+    if (reds.length) {
+      return { cls: 'red', text: '異常の証拠あり: ' + reds.map(function (c) { return c.short || c.label; }).join('・') };
+    }
+    if (yellows.length) {
+      return { cls: 'yellow', text: '注意: ' + yellows.map(function (c) { return c.short || c.label; }).join('・') };
+    }
+    if (greens.length) {
+      return { cls: 'green', text: '異常の証拠なし（履歴登録の成功が観測されています）' };
+    }
+    // 全カードが未観測 → 絶対に緑にしない
+    return { cls: 'gray', text: '判定不能: まだ観測がありません。問題の操作（スクショ等）を1回行ってから、もう一度「診断情報をコピー」して貼り直してください。' };
+  }
+
+  function renderCard(c) {
+    var div = document.createElement('div');
+    div.className = 'kcard ' + c.level;
+    div.innerHTML =
+      '<div class="label"></div>' +
+      '<div class="value"></div>' +
+      (c.message ? '<div class="msg"></div>' : '');
+    div.querySelector('.label').textContent = c.label;
+    div.querySelector('.value').textContent = c.value;
+    if (c.message) div.querySelector('.msg').textContent = c.message;
+    return div;
+  }
+
+  var lastSnapshot = null;
+  var lastVerdictText = '';
+
+  function render(snapshot) {
+    lastSnapshot = snapshot;
+    $verMeta.textContent = 'v' + snapshot.ver + '・稼働 ' + fmtUptime(snapshot.uptimeMs) +
+      '・監視' + (snapshot.watchOn ? 'ON' : 'OFF') + '・履歴' + snapshot.histLen + '件' +
+      '　※すべての数値は「診断情報をコピー」を押した瞬間のスナップショットです';
+
+    var sections = buildCards(snapshot);
+    ['state', 'imgFunnel', 'shot', 'textFunnel', 'other'].forEach(function (sec) {
+      var container = document.querySelector('section[data-sec="' + sec + '"] .grid');
+      container.innerHTML = '';
+      sections[sec].forEach(function (c) { container.appendChild(renderCard(c)); });
+    });
+
+    var verdict = aggregate(sections);
+    $verdict.className = 'verdict ' + verdict.cls;
+    $verdict.textContent = verdict.text;
+    lastVerdictText = verdict.text;
+
+    if (snapshot.uptimeMs < 60000) {
+      $verdictNote.hidden = false;
+      $verdictNote.textContent = '起動から' + Math.round(snapshot.uptimeMs / 1000) + '秒しか経っていません。カウンターが少ないのは自然です。';
+    } else {
+      $verdictNote.hidden = true;
+    }
+
+    $cards.hidden = false;
+    $btnShare.hidden = false;
+  }
+
+  function handleText(text) {
+    var result = extractJson(text);
+    if (result.err) {
+      $verdict.className = 'verdict red';
+      $verdict.textContent = result.err;
+      $verdictNote.hidden = true;
+      $cards.hidden = true;
+      $btnShare.hidden = true;
+      return;
+    }
+    if (result.obj.app !== 'soushin-suggest') {
+      $verdict.className = 'verdict red';
+      $verdict.textContent = '送信サジェストの診断JSONではないようです（app フィールドが一致しません）。';
+      $verdictNote.hidden = true;
+      $cards.hidden = true;
+      $btnShare.hidden = true;
+      return;
+    }
+    render(result.obj);
+  }
+
+  $paste.addEventListener('paste', function () {
+    // ブラウザがtextareaへ値を反映した後に読む
+    setTimeout(function () { handleText($paste.value); }, 0);
+  });
+  $btnRender.addEventListener('click', function () { handleText($paste.value); });
+
+  $btnShare.addEventListener('click', function () {
+    if (!lastSnapshot) return;
+    var lines = [];
+    lines.push('[送信サジェスト診断 v' + lastSnapshot.ver + ' / 稼働' + fmtUptime(lastSnapshot.uptimeMs) +
+      ' / 監視' + (lastSnapshot.watchOn ? 'ON' : 'OFF') + ' / 履歴' + lastSnapshot.histLen + '件]');
+    lines.push('総合判定: ' + lastVerdictText);
+    lines.push('--- 生データ ---');
+    lines.push(JSON.stringify(lastSnapshot));
+    var text = lines.join('\n');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        $btnShare.textContent = 'コピーしました！AIチャットに貼り付けてください';
+        setTimeout(function () { $btnShare.textContent = 'この結果をコピーしてAIに相談（原因が全部わかる1枚）'; }, 2000);
+      }).catch(function () {
+        $btnShare.textContent = 'コピーに失敗しました。手動で選択してコピーしてください';
+        setTimeout(function () { $btnShare.textContent = 'この結果をコピーしてAIに相談（原因が全部わかる1枚）'; }, 2500);
+      });
+    } else {
+      $btnShare.textContent = 'このブラウザは自動コピーに対応していません。手動で選択してコピーしてください';
+      setTimeout(function () { $btnShare.textContent = 'この結果をコピーしてAIに相談（原因が全部わかる1枚）'; }, 2500);
+    }
+  });
+})();
+</script>
+</body>
+</html>
