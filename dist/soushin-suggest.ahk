@@ -289,6 +289,7 @@ PushClipHistory(text) {
     ; テキストは検疫キューへ。自動クリアで消えれば一度もディスクに書かれない(D節の核心)
     if ClipArchiveText
         QueueTextArchive(text)
+    RefreshLauncherHistory()   ; ランチャーが開いたままの間もタブ数字・リストをライブ反映
 }
 
 ; FormatTimeの ddd はロケール依存で日本語曜日が出ないことがあるため自前マッピング
@@ -1132,6 +1133,7 @@ PushClipImage(dib, w, h) {
     ; 画像は検疫なし即保存(自動クリアはテキストのみ追跡するため対象外。D節参照)
     if (ClipArchiveImage && (dir := ArchiveSubDir("screenshot")) != "")
         SaveDibAsPng(dib, w, h, dir . "\img-" . FormatTime(, "yyyyMMdd-HHmmss") . ".png")
+    RefreshLauncherHistory()   ; ランチャーが開いたままの間もタブ数字・リストをライブ反映
 }
 
 SetClipboardImage(dib) {
@@ -1717,14 +1719,19 @@ LauncherLVItemHeight(lv) {
 ; ホバー監視: 直下項目の全文(+履歴は時刻)をToolTip表示。hwnd比較ではなく座標の直接判定で決める
 ; （MouseGetPosのControl出力はClassNN文字列でありHwndと直接比較できないため）
 LauncherWatchHover() {
-    global LauncherGui, LauncherLvH, LauncherLbS, LauncherHoverLast, ClipHistory, Snippets
+    global LauncherGui, LauncherLvH, LauncherLbS, LauncherHoverLast, ClipHistory, Snippets, LauncherTab
     if !IsObject(LauncherGui)
         return
     tip := ""
-    if (idx := LauncherLVItemUnderMouse(LauncherLvH)) && idx <= ClipHistory.Length
-        tip := ClipHistory[idx].time . " にコピー`n" . SubStr(ClipHistory[idx].text, 1, 600)
-    else if (idx := LauncherItemUnderMouse(LauncherLbS)) && idx <= Snippets.Length
-        tip := SubStr(Snippets[idx].value, 1, 600)
+    ; Tab3は非アクティブなタブの子コントロールも実体を保持し続けるため、アクティブタブでヒットテストを
+    ; 限定しないと、履歴タブ表示中でも裏に隠れた定型文ListBoxの内容がツールチップに出てしまう。
+    if (LauncherTab.Value = 1) {
+        if (idx := LauncherLVItemUnderMouse(LauncherLvH)) && idx <= ClipHistory.Length
+            tip := ClipHistory[idx].time . " にコピー`n" . SubStr(ClipHistory[idx].text, 1, 600)
+    } else {
+        if (idx := LauncherItemUnderMouse(LauncherLbS)) && idx <= Snippets.Length
+            tip := SubStr(Snippets[idx].value, 1, 600)
+    }
     if (tip != LauncherHoverLast) {
         LauncherHoverLast := tip
         ToolTip(tip)
@@ -1802,10 +1809,24 @@ ToggleClipWatch(name, *) {
 }
 
 RefreshLauncherHistory() {
-    global LauncherGui, LauncherLvH
+    global LauncherGui, LauncherLvH, LauncherTab, ClipHistory
     if !IsObject(LauncherGui)
         return
     FillLauncherHistoryLV(LauncherLvH)
+    SetTabLabel(LauncherTab, 1, "履歴 " . ClipHistory.Length)
+}
+
+; Tab3のタブ見出しを生成後に書き換える。AHK v2にはGui.Tabの見出し変更メソッドが無いため
+; TCM_SETITEMをネイティブに叩く(AHKは常にUnicodeビルドなのでA/W区別不要)。
+; TCITEMW構造体(64bit): mask(4)+dwState(4)+dwStateMask(4)+pad(4)
+; +pszText(8,ptr,offset16)+cchTextMax(4)+iImage(4)+pad(4)+lParam(8,ptr) = 40バイト。
+; TCM_FIRST=0x1300、TCM_SETITEM=TCM_FIRST+61=0x133D(Microsoft Learn commctrl.hで裏取り済み)。
+SetTabLabel(tabCtrl, index, text) {
+    static TCIF_TEXT := 0x1, TCM_SETITEM := 0x133D
+    tcitem := Buffer(40, 0)
+    NumPut("UInt", TCIF_TEXT, tcitem, 0)               ; mask
+    NumPut("Ptr", StrPtr(text), tcitem, 16)             ; pszText
+    SendMessage(TCM_SETITEM, index - 1, tcitem.Ptr, tabCtrl)   ; 0-based index
 }
 
 ; ShowLauncherとRefreshLauncherHistoryで共用。11件目以降は番号なし(数字キー対象外)。
