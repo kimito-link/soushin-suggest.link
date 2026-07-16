@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; form-action 'none'; base-uri 'none'">
+<meta name="robots" content="noindex">
+<title>送信サジェスト コードの地図</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body {
+    font-family: "Meiryo UI", "Hiragino Kaku Gothic ProN", sans-serif;
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 16px;
+    line-height: 1.6;
+    background: #f5f7fa;
+    color: #1a1a1a;
+  }
+  header { margin-bottom: 12px; }
+  header h1 { font-size: 20px; margin: 0 0 4px; }
+  #meta { color: #666; font-size: 13px; }
+  #meta a { color: #4a6fd1; }
+  .banner {
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 14px;
+    margin-bottom: 12px;
+  }
+  .banner.error { background: #ffe3e3; color: #a80000; border: 1px solid #f5a3a3; }
+  .banner.warn { background: #fff6d8; color: #7a5c00; border: 1px solid #f0d878; }
+  .banner.ok { background: #e2f7e6; color: #146c2e; border: 1px solid #a7e3b3; }
+
+  #spine {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 16px;
+  }
+  .stage {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 10px 14px;
+    flex: 1 1 160px;
+    min-width: 140px;
+    cursor: pointer;
+  }
+  .stage:hover { border-color: #4a6fd1; }
+  .stage .stage-label { font-weight: bold; font-size: 14px; }
+  .stage .stage-desc { font-size: 11px; color: #666; margin: 4px 0; }
+  .stage .stage-funcs { font-size: 11px; }
+  .stage .stage-funcs code { color: #4a6fd1; }
+  .stage-arrow { align-self: center; color: #999; font-size: 18px; }
+
+  #entries {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 16px;
+    font-size: 13px;
+  }
+  #entries table { width: 100%; border-collapse: collapse; }
+  #entries td { padding: 4px 8px; border-bottom: 1px solid #eee; vertical-align: top; }
+  #entries td:first-child { white-space: nowrap; font-weight: bold; color: #4a6fd1; width: 160px; }
+
+  main h2 { font-size: 15px; margin: 20px 0 8px; color: #333; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; }
+  .card {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 10px 12px;
+    scroll-margin-top: 12px;
+  }
+  .card.highlight { border-color: #4a6fd1; box-shadow: 0 0 0 2px #4a6fd155; }
+  .card .fname { font-weight: bold; font-size: 14px; }
+  .card .line { color: #999; font-size: 11px; margin-left: 6px; }
+  .card .role { font-size: 12px; color: #444; margin: 4px 0 0; }
+  .card .role.missing { color: #999; font-style: italic; }
+  .card details { margin-top: 4px; font-size: 12px; color: #555; }
+  .card summary { cursor: pointer; color: #4a6fd1; }
+
+  #health {
+    margin-top: 24px;
+    padding: 12px 16px;
+    border-radius: 8px;
+    background: #fff;
+    border: 1px solid #ddd;
+    font-size: 13px;
+  }
+  #health .stat { margin-bottom: 4px; }
+  #health .list { color: #666; font-size: 12px; }
+
+  #privacy { font-size: 12px; color: #888; margin-top: 20px; }
+
+  @media (prefers-color-scheme: dark) {
+    body { background: #14161a; color: #e6e6e6; }
+    .stage, #entries, .card, #health { background: #1e2127; border-color: #333; }
+    #entries td { border-color: #333; }
+    .stage .stage-desc, .card .role, #health .list { color: #aaa; }
+    #meta { color: #999; }
+    main h2 { color: #ccc; }
+    #privacy { color: #777; }
+  }
+</style>
+</head>
+<body>
+  <header>
+    <h1>送信サジェスト コードの地図</h1>
+    <p id="meta">読み込み中… ／ <a href="/shindan/">実機の診断ビューアはこちら(/shindan/)</a></p>
+  </header>
+
+  <div id="statusBanner"></div>
+
+  <section id="spine" hidden></section>
+  <section id="entries" hidden><h2>入口（ホットキー・フック）</h2><table><tbody></tbody></table></section>
+
+  <main id="cards" hidden></main>
+
+  <footer id="health" hidden></footer>
+
+  <p id="privacy">🔒 このページは <code>/dist/soushin-suggest.ahk</code>（同一オリジンの公開ソース）をその場で取得して解析するだけです。外部への送信はありません。</p>
+
+<script>
+(function () {
+  'use strict';
+
+  var SOURCE_URL = '/dist/soushin-suggest.ahk';
+
+  // --- C-1 第3層: パイプライン(完全ハードコード。自動推論しない) ---
+  var SPINE_STAGES = [
+    { id: 'detect', label: '👀 検知', desc: 'クリップボード変化を捕まえ、ノイズ・除外アプリを弾く',
+      funcs: ['ClipChanged', 'ClipHasIgnoreFormat', 'ClipSourceExcluded'] },
+    { id: 'capture', label: '📥 取得', desc: 'テキスト/画像を実際に読み取る',
+      funcs: ['CaptureClip', 'CaptureClipImage'] },
+    { id: 'record', label: '💾 記録', desc: 'メモリ履歴へ追加(重複昇格・上限)、オプトイン時のみ検疫付き保存',
+      funcs: ['PushClipHistory', 'PushClipImage', 'QueueTextArchive'] },
+    { id: 'display', label: '🖼 表示', desc: 'ランチャーの履歴タブへライブ反映',
+      funcs: ['RefreshLauncherHistory', 'FillLauncherHistoryLV', 'ShowLauncher'] },
+    { id: 'paste', label: '📤 貼り付け', desc: '選んだ項目を対象アプリへ送る',
+      funcs: ['PasteHistoryAt', 'PasteText', 'PasteImage'] }
+  ];
+
+  // 入口(ホットキー/フック)の説明。行番号はパースで取り、説明文だけ固定辞書で持つ。
+  var ENTRY_NOTES = {
+    '~LButton': 'なぞってコピー(ドラッグ解放でCtrl+C送信)',
+    'RButton': '長押しで送信キー送信(短押しは通常の右クリック)',
+    'XButton1': 'クイックペーストランチャーを開く',
+    'XButton2': '短押し=カーソル位置モニタの全画面スクショ／長押し=範囲指定スクショ',
+    'MButton': 'Git Bashを前面へ(無ければ起動)',
+    '^#c': 'なぞってコピーのON/OFF切替',
+    '^#v': 'クイックペーストを開く(マウス不要)',
+    'OnClipboardChange': 'クリップボード変化のグローバルフック登録 → ClipChanged'
+  };
+
+  // --- C-1 第0層: 手動上書き(regexの誤爆を止める少数の例外) ---
+  var MANUAL = {
+    UseSnippetAt: '📤 送信・貼り付け',
+    GetClipDib: '📷 画像・スクショ',
+    SetClipboardImage: '📷 画像・スクショ',
+    ActivateGitBash: '🚪 入口・ジェスチャ',
+    Flash: '🔧 汎用ヘルパ',
+    NowWithWeekday: '🔧 汎用ヘルパ',
+    RunnablePathFrom: '🔧 汎用ヘルパ'
+  };
+
+  // --- C-1 第1層: 関数名regex(順序が意味を持つ。上から最初のマッチで確定) ---
+  var NAME_RULES = [
+    [/^Diag|Diagnostics|^BuildDiagText$/i, '🩺 診断'],
+    [/Archive/i, '🗃 フォルダ保存(オプトイン)'],
+    [/Snip|Csv|Clibor/i, '📝 定型文管理'],
+    [/Thumb|Dib|Png|Bmp|Image|Monitor|ScreenRect/i, '📷 画像・スクショ'],
+    [/Clip|CaptureClip|MaybeDrop/i, '📋 コピー検知・フィルタ'],
+    [/Paste|SendMode/i, '📤 送信・貼り付け'],
+    [/Hist|History/i, '💾 履歴記録'],
+    [/Launcher|^SetTabLabel$|Hover|Drag/i, '🖼 ランチャーUI'],
+    [/Ini|Config|Settings|Startup|Shortcut|AhkProp/i, '⚙ 設定・起動']
+  ];
+
+  // --- C-1 第2層: 役割コメント文言regex(名前が無口な関数を拾う網) ---
+  var ROLE_RULES = [
+    [/貼り付け|送信|ペースト/, '📤 送信・貼り付け'],
+    [/履歴/, '💾 履歴記録'],
+    [/スクショ|画像|サムネ|ビットマップ/, '📷 画像・スクショ'],
+    [/ツールチップ|ホバー|タブ|リスト|GUI|ウィンドウ/, '🖼 ランチャーUI'],
+    [/ini|設定|スタートアップ|ショートカット/i, '⚙ 設定・起動'],
+    [/曜日|時刻|パス|ロケール/, '🔧 汎用ヘルパ']
+  ];
+
+  var CATEGORY_ORDER = [
+    '🩺 診断', '📋 コピー検知・フィルタ', '📥 取得', '💾 履歴記録', '📷 画像・スクショ',
+    '📤 送信・貼り付け', '🖼 ランチャーUI', '📝 定型文管理', '🗃 フォルダ保存(オプトイン)',
+    '⚙ 設定・起動', '🚪 入口・ジェスチャ', '🔧 汎用ヘルパ', 'その他'
+  ];
+
+  function classify(name, role) {
+    if (MANUAL[name]) return MANUAL[name];
+    for (var i = 0; i < NAME_RULES.length; i++) {
+      if (NAME_RULES[i][0].test(name)) return NAME_RULES[i][1];
+    }
+    if (role) {
+      for (var j = 0; j < ROLE_RULES.length; j++) {
+        if (ROLE_RULES[j][0].test(role)) return ROLE_RULES[j][1];
+      }
+    }
+    return 'その他';
+  }
+
+  // --- C-3: 関数定義・入口の検出 ---
+  var KEYWORDS = /^(if|while|for|loop|until|else|try|catch|switch|return|static|global|class)\b/i;
+  var DEF_RE = /^([A-Za-z_]\w*)\(([^)]*)\)\s*\{\s*(?:;\s*(.*))?$/;
+  var HOTKEY_RE = /^([~*$!^+#<>]*[^:\s][^:]*)::/;
+
+  // --- C-2: 役割コメント抽出(隣接性ルール。空行・非コメント行で即打ち切り) ---
+  function extractRole(lines, defLineIdx, funcName, trailingComment) {
+    var blockLines = [];
+    var i = defLineIdx - 1;
+    while (i >= 0) {
+      var raw = lines[i];
+      var t = raw.replace(/\r$/, '');
+      if (/^\s*;/.test(t)) {
+        blockLines.unshift(t.replace(/^\s*;\s?/, ''));
+        i--;
+      } else {
+        break; // 空行・非コメント行(globalも含む)で即打ち切り
+      }
+    }
+    var candidates = blockLines;
+    if (candidates.length === 0 && trailingComment) {
+      candidates = [trailingComment];
+    }
+    for (var k = 0; k < candidates.length; k++) {
+      var line = candidates[k];
+      line = line.replace(/^[=\-–—*]{3,}\s*/, '').replace(/\s*[=\-–—*]{3,}$/, '').trim();
+      if (!line) continue;
+      if (/^@/.test(line)) continue;
+      if (/^(TODO|FIXME|NOTE):?$/i.test(line)) continue;
+      var nameEcho = new RegExp('^' + funcName + '\\s*[:：]?$', 'i');
+      if (nameEcho.test(line)) continue;
+      if (line.length >= 4) {
+        return { first: line, full: candidates.slice(k).join('\n') };
+      }
+    }
+    return null;
+  }
+
+  function parseSource(text) {
+    text = text.replace(/^﻿/, '');
+    var lines = text.split(/\r?\n/);
+    var funcs = [];
+    var entries = [];
+    var appVersion = null;
+
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+
+      if (!appVersion) {
+        var vm = line.match(/^global\s+AppVersion\s*:=\s*"([^"]+)"/);
+        if (vm) appVersion = vm[1];
+      }
+
+      var hm = line.match(HOTKEY_RE);
+      if (hm && !DEF_RE.test(line)) {
+        var key = hm[1].trim();
+        entries.push({ key: key, line: i + 1 });
+        continue;
+      }
+
+      var dm = line.match(DEF_RE);
+      if (dm && !KEYWORDS.test(dm[1])) {
+        var fname = dm[1];
+        var trailing = dm[3] || null;
+        var roleInfo = extractRole(lines, i, fname, trailing);
+        funcs.push({
+          name: fname,
+          line: i + 1,
+          role: roleInfo ? roleInfo.first : null,
+          detail: roleInfo ? roleInfo.full : null
+        });
+      }
+    }
+    return { funcs: funcs, entries: entries, appVersion: appVersion, lineCount: lines.length };
+  }
+
+  function renderSpine(parsed) {
+    var $spine = document.getElementById('spine');
+    var funcLines = {};
+    parsed.funcs.forEach(function (f) { funcLines[f.name] = f.line; });
+
+    SPINE_STAGES.forEach(function (stage, idx) {
+      var div = document.createElement('div');
+      div.className = 'stage';
+      var funcHtml = stage.funcs.map(function (fn) {
+        var ln = funcLines[fn];
+        return '<code>' + fn + (ln ? ' L' + ln : '') + '</code>';
+      }).join(' ');
+      div.innerHTML =
+        '<div class="stage-label"></div>' +
+        '<div class="stage-desc"></div>' +
+        '<div class="stage-funcs">' + funcHtml + '</div>';
+      div.querySelector('.stage-label').textContent = stage.label;
+      div.querySelector('.stage-desc').textContent = stage.desc;
+      div.addEventListener('click', function () {
+        var first = stage.funcs[0];
+        var card = document.getElementById('fn-' + first);
+        if (card) {
+          card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          document.querySelectorAll('.card.highlight').forEach(function (c) { c.classList.remove('highlight'); });
+          card.classList.add('highlight');
+          setTimeout(function () { card.classList.remove('highlight'); }, 2000);
+        }
+      });
+      $spine.appendChild(div);
+      if (idx < SPINE_STAGES.length - 1) {
+        var arrow = document.createElement('div');
+        arrow.className = 'stage-arrow';
+        arrow.textContent = '→';
+        $spine.appendChild(arrow);
+      }
+    });
+    $spine.hidden = false;
+  }
+
+  function renderEntries(parsed) {
+    var $tbody = document.querySelector('#entries tbody');
+    var seen = {};
+    parsed.entries.forEach(function (e) {
+      var note = ENTRY_NOTES[e.key];
+      if (!note) return; // 説明が無いものは辞書にない=このページの対象外(ノイズ回避)
+      if (seen[e.key]) return;
+      seen[e.key] = true;
+      var tr = document.createElement('tr');
+      tr.innerHTML = '<td></td><td></td>';
+      tr.children[0].textContent = e.key + ' (L' + e.line + ')';
+      tr.children[1].textContent = note;
+      $tbody.appendChild(tr);
+    });
+    // OnClipboardChangeはホットキーではなく登録呼び出しなので固定行として追加
+    var tr2 = document.createElement('tr');
+    tr2.innerHTML = '<td></td><td></td>';
+    tr2.children[0].textContent = 'OnClipboardChange';
+    tr2.children[1].textContent = ENTRY_NOTES['OnClipboardChange'];
+    $tbody.appendChild(tr2);
+    document.getElementById('entries').hidden = false;
+  }
+
+  function renderCards(parsed) {
+    var byCategory = {};
+    CATEGORY_ORDER.forEach(function (c) { byCategory[c] = []; });
+    parsed.funcs.forEach(function (f) {
+      var cat = classify(f.name, f.role);
+      if (!byCategory[cat]) byCategory[cat] = [];
+      byCategory[cat].push(f);
+    });
+
+    var $cards = document.getElementById('cards');
+    CATEGORY_ORDER.forEach(function (cat) {
+      var list = byCategory[cat];
+      if (!list || list.length === 0) return;
+      var h2 = document.createElement('h2');
+      h2.textContent = cat + ' (' + list.length + ')';
+      $cards.appendChild(h2);
+      var grid = document.createElement('div');
+      grid.className = 'grid';
+      list.forEach(function (f) {
+        var card = document.createElement('div');
+        card.className = 'card';
+        card.id = 'fn-' + f.name;
+        var roleHtml = f.role
+          ? '<p class="role"></p>'
+          : '<p class="role missing">役割コメントなし</p>';
+        var detailHtml = (f.detail && f.detail.split('\n').length > 1)
+          ? '<details><summary>詳細</summary><pre style="white-space:pre-wrap;margin:4px 0 0;"></pre></details>'
+          : '';
+        card.innerHTML =
+          '<span class="fname"></span><span class="line"></span>' +
+          roleHtml + detailHtml;
+        card.querySelector('.fname').textContent = f.name;
+        card.querySelector('.line').textContent = 'L' + f.line;
+        if (f.role) card.querySelector('.role').textContent = f.role;
+        if (detailHtml) card.querySelector('pre').textContent = f.detail;
+        grid.appendChild(card);
+      });
+      $cards.appendChild(grid);
+    });
+    $cards.hidden = false;
+  }
+
+  function renderHealth(parsed) {
+    var missing = parsed.funcs.filter(function (f) { return !f.role; });
+    var other = parsed.funcs.filter(function (f) { return classify(f.name, f.role) === 'その他'; });
+    var $health = document.getElementById('health');
+    var stat1 = document.createElement('div');
+    stat1.className = 'stat';
+    stat1.textContent = '役割コメントが無い関数: ' + missing.length + '/' + parsed.funcs.length + '件';
+    var list1 = document.createElement('div');
+    list1.className = 'list';
+    list1.textContent = missing.map(function (f) { return f.name; }).join(', ') || '(なし)';
+    var stat2 = document.createElement('div');
+    stat2.className = 'stat';
+    stat2.style.marginTop = '10px';
+    stat2.textContent = '「その他」に分類された関数: ' + other.length + '件';
+    var list2 = document.createElement('div');
+    list2.className = 'list';
+    list2.textContent = other.map(function (f) { return f.name; }).join(', ') || '(なし)';
+    $health.appendChild(stat1);
+    $health.appendChild(list1);
+    $health.appendChild(stat2);
+    $health.appendChild(list2);
+    $health.hidden = false;
+  }
+
+  function showError(message) {
+    var $banner = document.getElementById('statusBanner');
+    var div = document.createElement('div');
+    div.className = 'banner error';
+    div.textContent = message;
+    $banner.appendChild(div);
+  }
+
+  fetch(SOURCE_URL, { cache: 'no-cache' })
+    .then(function (res) {
+      if (!res.ok) {
+        showError('取得失敗: ' + SOURCE_URL + ' (HTTP ' + res.status + ')');
+        throw new Error('fetch failed');
+      }
+      return res.text();
+    })
+    .then(function (text) {
+      var parsed = parseSource(text);
+      document.getElementById('meta').innerHTML =
+        (parsed.appVersion ? 'v' + parsed.appVersion + ' ・ ' : '') +
+        parsed.lineCount + '行 ・ 関数' + parsed.funcs.length + '個' +
+        ' ／ <a href="/shindan/">実機の診断ビューアはこちら(/shindan/)</a>';
+      renderSpine(parsed);
+      renderEntries(parsed);
+      renderCards(parsed);
+      renderHealth(parsed);
+    })
+    .catch(function (err) {
+      if (!/fetch failed/.test(err.message)) {
+        showError('解析に失敗しました: ' + err.message);
+      }
+    });
+})();
+</script>
+</body>
+</html>
