@@ -23,7 +23,7 @@ if A_IsCompiled
 ;  対応アプリ・送信ルールは sites.ini、定型文は snippets.ini で編集できます（同梱）。
 ;  トレイのアイコンを右クリック -> Suspend Hotkeys / Exit
 
-global AppVersion := "1.18.0"
+global AppVersion := "1.18.1"
 global CopyOnSelect := true, dragX := 0, dragY := 0, dragT := 0
 global SitesConfig := Map()
 global SiteRules := []
@@ -570,9 +570,11 @@ CsvField(s) {
 
 ; 定型文をCSV(label,body)でエクスポート。他ツール(Excel等)との往復を想定した汎用形式。
 ; dlg=trueなら結果をCSVダイアログのステータス行に出す。falseならToolTip(Flash)。
-; snippets(items配列)をCSVテキスト(UTF-8 BOM付き・ヘッダlabel,body)へ整形する共通ロジック
+; snippets(items配列)をCSVテキスト(ヘッダlabel,body)へ整形する共通ロジック。
+; BOMはFileAppend(…,"UTF-8")がファイル新規作成時に自動付与するためここでは足さない
+; (Chr(0xFEFF)を足すと二重BOMになりCSV読込側のヘッダ判定が壊れる。実機で発覚した既知の地雷)
 SnippetsToCsvText(items) {
-    out := Chr(0xFEFF) . "label,body`r`n"
+    out := "label,body`r`n"
     for s in items
         out .= CsvField(s.label) . "," . CsvField(s.value) . "`r`n"
     return out
@@ -2068,7 +2070,9 @@ CommitPendingArchive() {
                     path := dir . "\history-" . FormatTime(, "yyyy-MM-dd") . ".csv"
                     isNew := !FileExist(path)
                     try {
-                        out := isNew ? Chr(0xFEFF) . "time,text`r`n" : ""   ; 新規時のみUTF-8 BOM+ヘッダ
+                        ; FileAppend(…,"UTF-8")はAHKが新規ファイルにBOMを自動付与するため、
+                        ; ここでChr(0xFEFF)を足すと二重BOMになる(実機で発覚。history-store.csvと同じ地雷)
+                        out := isNew ? "time,text`r`n" : ""
                         out .= CsvField(FormatTime(, "HH:mm:ss")) . "," . CsvField(p.text) . "`r`n"
                         FileAppend(out, path, "UTF-8")
                     }
@@ -2098,7 +2102,11 @@ AppendHistoryStore(timeStr, text) {
     try DirCreate(ArchiveBaseDir())
     isNew := !FileExist(path)
     try {
-        out := isNew ? Chr(0xFEFF) . "time,type,text`r`n" : ""
+        ; FileAppend(…, "UTF-8")は新規ファイル作成時にAHK自身がBOMを自動付与する。
+        ; ここでChr(0xFEFF)を明示的に足すと二重BOM(EF BB BF EF BB BF)になり、起動時の
+        ; RegExReplace("^\x{FEFF}")が1個しか剥がせず、ヘッダ判定(row[1]="time")が
+        ; ズレて壊れる(実機で発覚済みのバグ)。ヘッダ文字列だけ書き、BOMはAHKに任せる。
+        out := isNew ? "time,type,text`r`n" : ""
         out .= CsvField(timeStr) . ",text," . CsvField(text) . "`r`n"
         FileAppend(out, path, "UTF-8")
     }
