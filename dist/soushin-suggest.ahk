@@ -23,7 +23,7 @@ if A_IsCompiled
 ;  対応アプリ・送信ルールは sites.ini、定型文は snippets.ini で編集できます（同梱）。
 ;  トレイのアイコンを右クリック -> Suspend Hotkeys / Exit
 
-global AppVersion := "1.18.1"
+global AppVersion := "1.18.2"
 global CopyOnSelect := true, dragX := 0, dragY := 0, dragT := 0
 global SitesConfig := Map()
 global SiteRules := []
@@ -505,14 +505,7 @@ TryLoadCliborCsv(path, existing) {
             return false
     }
 
-    ; パス1: 非空グループの種類数を数える（2種類以上のときのみラベルにプレフィックスを付ける）
-    groups := Map()
-    for idx, row in rows
-        if (idx > 1 && row.Length >= 1 && Trim(row[1]) != "")
-            groups[Trim(row[1])] := 1
-    multi := groups.Count >= 2
-
-    ; パス2: 変換＋一意化＋冪等スキップ
+    ; Cliborのグループ機能は使いづらいとの判断で不採用。ラベルにグループ名プレフィックスは付けない
     items := [], seen := Map()            ; seen: この取込内で確定したラベル→本文
     for idx, row in rows {
         if (idx = 1 || row.Length < 2)
@@ -521,8 +514,7 @@ TryLoadCliborCsv(path, existing) {
         if (body = "")
             continue
         memo := row.Length >= 3 ? row[3] : ""
-        base := (multi && Trim(row[1]) != "" ? Trim(row[1]) . "/" : "")
-              . CliborLabelBase(memo, body)
+        base := CliborLabelBase(memo, body)
         label := base, n := 1
         while (existing.Has(label) || seen.Has(label)) {
             ; 同一本文なら真の重複 → スキップ（再取込の冪等性）

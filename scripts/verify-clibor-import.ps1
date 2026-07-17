@@ -97,7 +97,7 @@ try {
     if (-not ($resultA -match '^お疲れ様です\tお疲れ様です$')) { throw "FAIL A: label-from-body-fallback row missing or wrong: $($resultA -join ' | ')" }
     Write-Output 'PASS A: CP932 4-column Clibor export (single group) recognized and converted'
 
-    # --- Fixture E: multiple groups -> labels get a "group/" prefix ---
+    # --- Fixture E: multiple groups -> Clibor's group feature was judged unusable, so no "group/" prefix ever ---
     $csvE = Join-Path $stage 'clibor-multigroup.csv'
     $rowsE = @(
         '定型文グループ,定型文,メモ,ホットキー'
@@ -108,9 +108,9 @@ try {
 
     $resultE = Invoke-CliborProbe -InputPath $csvE
     if ($resultE.Count -ne 2) { throw "FAIL E: expected 2 rows, got $($resultE.Count): $($resultE -join ' | ')" }
-    if (-not ($resultE -match '^あいさつ/朝の挨拶\tおはようございます$')) { throw "FAIL E: group-prefixed label missing or wrong: $($resultE -join ' | ')" }
-    if (-not ($resultE -match '^返信/承知メモ\t承知いたしました。$')) { throw "FAIL E: second group-prefixed label missing or wrong: $($resultE -join ' | ')" }
-    Write-Output 'PASS E: multiple groups get group/-prefixed labels'
+    if (-not ($resultE -match '^朝の挨拶\tおはようございます$')) { throw "FAIL E: label should not be group-prefixed: $($resultE -join ' | ')" }
+    if (-not ($resultE -match '^承知メモ\t承知いたしました。$')) { throw "FAIL E: second label should not be group-prefixed: $($resultE -join ' | ')" }
+    Write-Output 'PASS E: multiple groups no longer get a group/-prefixed label'
 
     # --- Fixture B: UTF-8 (BOM) variant of the same shape ---
     $csvB = Join-Path $stage 'clibor-utf8.csv'
