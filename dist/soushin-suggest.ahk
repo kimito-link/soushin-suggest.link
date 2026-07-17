@@ -23,7 +23,7 @@ if A_IsCompiled
 ;  対応アプリ・送信ルールは sites.ini、定型文は snippets.ini で編集できます（同梱）。
 ;  トレイのアイコンを右クリック -> Suspend Hotkeys / Exit
 
-global AppVersion := "1.14.2"
+global AppVersion := "1.14.3"
 global CopyOnSelect := true, dragX := 0, dragY := 0, dragT := 0
 global SitesConfig := Map()
 global SiteRules := []
@@ -665,8 +665,12 @@ SetCsvStatus(msg) {
 }
 
 ; ランチャー右上の歯車から開く設定メニュー。トレイメニューと同じ項目を抜粋して束ねる。
+; 「設定...」はShowSettingsWindow内で独自にタイマーを止めたまま設定ウィンドウを開いたままにするため、
+; m.Show()から戻った直後にここで無条件に150へ戻すと、その停止を踏みつけて即座にランチャーが
+; 閉じてしまう(設定ウィンドウにフォーカスが移った瞬間タイマーが「非アクティブ」と誤検知する)。
+; SettingsGuiが可視(=設定ウィンドウ経由でメニューを抜けた)ならタイマーは止めたままにする。
 ShowLauncherSettingsMenu(*) {
-    global LauncherGui, ClipWatchOn
+    global LauncherGui, ClipWatchOn, SettingsGui
     SetTimer(CheckLauncherFocus, 0)   ; メニュー表示中の誤クローズ防止(既存の履歴右クリックメニューと同じ流儀)
     m := Menu()
     m.Add("クリップボード監視を一時停止", ToggleClipWatch)
@@ -678,7 +682,8 @@ ShowLauncherSettingsMenu(*) {
     if !ClipWatchOn
         m.Check("クリップボード監視を一時停止")
     m.Show()
-    if IsObject(LauncherGui)
+    settingsOpen := IsObject(SettingsGui) && DllCall("IsWindowVisible", "Ptr", SettingsGui.Hwnd)
+    if (IsObject(LauncherGui) && !settingsOpen)
         SetTimer(CheckLauncherFocus, 150)
 }
 
