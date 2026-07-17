@@ -23,7 +23,7 @@ if A_IsCompiled
 ;  対応アプリ・送信ルールは sites.ini、定型文は snippets.ini で編集できます（同梱）。
 ;  トレイのアイコンを右クリック -> Suspend Hotkeys / Exit
 
-global AppVersion := "1.15.0"
+global AppVersion := "1.15.1"
 global CopyOnSelect := true, dragX := 0, dragY := 0, dragT := 0
 global SitesConfig := Map()
 global SiteRules := []
@@ -1070,16 +1070,17 @@ ShowLauncher() {
         LauncherTab.GetPos(&tX, &tY, , &tH0)
         LauncherTab.Move(, , , tH0 + (listH - lvH0))
     }
-    ; ブランドロゴ: フッター(Tab3コントロールの下端に明示座標で追従)に中央揃えで控えめに表示。
-    ; リスト行数(rows)でTab3の下端が動くため、Tab3.GetPos()で実際の下端を取得してから置く。
-    ; 画像は102x64(2:1)。wのみ指定してhは-1でアスペクト比を保たせ、横伸びを防ぐ。
+    ; ブランドロゴ: フッター(Tab3コントロールの下端に明示座標で追従)に中央揃えで大きく表示。
+    ; リスト行数(rows)でTab3の下端が動くため、Tab3.GetPos()で実際の下端を取得してから置く(履歴/定型文
+    ; どちらのタブでも同じ位置に来る=「切替に関わらず中央」の要件はこの追従計算で満たされる)。
+    ; 画像は280x210(4:3)。wのみ指定してhは-1でアスペクト比を保たせ、横伸びを防ぐ。
     ; 読み込み失敗時は握りつぶし、ロゴが出ないだけでランチャーは通常通り使える。
     LauncherTab.GetPos(&tabX, &tabY, &tabW, &tabH)
     footerY := tabY + tabH + 6
-    logoW := 90, logoH := 45                      ; 102x64を90幅に縮小(比率維持: 90*64/102≈56だが余白確保のため45に収める)
+    logoW := 280, logoH := 210
     try LauncherGui.Add("Picture", "x" . (tabX + (tabW - logoW) // 2) . " y" . footerY . " w" . logoW . " h-1",
-        A_ScriptDir . "\kimitolink-full-logo-64.png")
-    LauncherGui.Add("Text", "x0 y" . footerY . " w1 h40")   ; ロゴ行の高さをウィンドウ計算に含めるための透明スペーサ
+        A_ScriptDir . "\kimitolink-full-logo-280.png")
+    LauncherGui.Add("Text", "x0 y" . footerY . " w1 h" . logoH)   ; ロゴ行の高さをウィンドウ計算に含めるための透明スペーサ
     LauncherGui.OnEvent("Escape", (*) => CloseLauncher())
     LauncherGui.OnEvent("ContextMenu", LauncherContextMenu)
     ; 画面上の固定位置に開く。マウスカーソルが画面下部にあると追従表示では毎回隠れて

@@ -27,6 +27,7 @@ $logo14 = Join-Path $repo 'assets\kimitolink-mark-14.png'
 $logoFull = Join-Path $repo 'assets\kimitolink-full-logo.png'
 $logo18 = Join-Path $repo 'assets\kimitolink-mark-18.png'
 $logoFull64 = Join-Path $repo 'assets\kimitolink-full-logo-64.png'
+$logoFull280 = Join-Path $repo 'assets\kimitolink-full-logo-280.png'
 $rinkuSearchIcon = Join-Path $repo 'assets\rinku-search-icon-22.png'
 $distIni = Join-Path $repo 'dist\sites.ini'
 $distSnippets = Join-Path $repo 'dist\snippets.ini'
@@ -60,6 +61,10 @@ if (-not (Test-Path $logoFull64)) {
     Write-Error "Full logo (64px) not found: $logoFull64"
     exit 1
 }
+if (-not (Test-Path $logoFull280)) {
+    Write-Error "Full logo (280px) not found: $logoFull280"
+    exit 1
+}
 if (-not (Test-Path $rinkuSearchIcon)) {
     Write-Error "Rinku search icon not found: $rinkuSearchIcon"
     exit 1
@@ -74,6 +79,7 @@ Copy-Item $logo14 (Join-Path $stage 'kimitolink-mark-14.png')
 Copy-Item $logoFull (Join-Path $stage 'kimitolink-full-logo.png')
 Copy-Item $logo18 (Join-Path $stage 'kimitolink-mark-18.png')
 Copy-Item $logoFull64 (Join-Path $stage 'kimitolink-full-logo-64.png')
+Copy-Item $logoFull280 (Join-Path $stage 'kimitolink-full-logo-280.png')
 Copy-Item $rinkuSearchIcon (Join-Path $stage 'rinku-search-icon-22.png')
 
 $ahk2exe = 'C:\Program Files\AutoHotkey\Compiler\Ahk2Exe.exe'
@@ -114,12 +120,14 @@ $distLogo14 = Join-Path $repo 'dist\kimitolink-mark-14.png'
 $distLogoFull = Join-Path $repo 'dist\kimitolink-full-logo.png'
 $distLogo18 = Join-Path $repo 'dist\kimitolink-mark-18.png'
 $distLogoFull64 = Join-Path $repo 'dist\kimitolink-full-logo-64.png'
+$distLogoFull280 = Join-Path $repo 'dist\kimitolink-full-logo-280.png'
 $distRinkuSearchIcon = Join-Path $repo 'dist\rinku-search-icon-22.png'
 Copy-Item $logo $distLogo -Force
 Copy-Item $logo14 $distLogo14 -Force
 Copy-Item $logoFull $distLogoFull -Force
 Copy-Item $logo18 $distLogo18 -Force
 Copy-Item $logoFull64 $distLogoFull64 -Force
+Copy-Item $logoFull280 $distLogoFull280 -Force
 Copy-Item $rinkuSearchIcon $distRinkuSearchIcon -Force
 
 $zip = Join-Path $repo ("dist\soushin-suggest-v" + $Version + ".zip")
@@ -134,6 +142,7 @@ $zipPaths = @(
     $distLogoFull,
     $distLogo18,
     $distLogoFull64,
+    $distLogoFull280,
     $distRinkuSearchIcon
 )
 if (Test-Path $distSnippets) {
