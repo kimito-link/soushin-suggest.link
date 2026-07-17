@@ -23,7 +23,7 @@ if A_IsCompiled
 ;  対応アプリ・送信ルールは sites.ini、定型文は snippets.ini で編集できます（同梱）。
 ;  トレイのアイコンを右クリック -> Suspend Hotkeys / Exit
 
-global AppVersion := "1.14.1"
+global AppVersion := "1.14.2"
 global CopyOnSelect := true, dragX := 0, dragY := 0, dragT := 0
 global SitesConfig := Map()
 global SiteRules := []
@@ -1033,9 +1033,20 @@ ShowLauncher() {
     LauncherGui.Add("Text", "x0 y" . footerY . " w1 h40")   ; ロゴ行の高さをウィンドウ計算に含めるための透明スペーサ
     LauncherGui.OnEvent("Escape", (*) => CloseLauncher())
     LauncherGui.OnEvent("ContextMenu", LauncherContextMenu)
-    ; 画面上の固定位置に開く(プライマリモニタ中央)。マウスカーソルが画面下部にあると
-    ; 追従表示では毎回隠れてしまうという実運用フィードバックを受け、位置固定に変更(v1.13.0〜)。
-    LauncherGui.Show("w460 xCenter yCenter")
+    ; 画面上の固定位置に開く。マウスカーソルが画面下部にあると追従表示では毎回隠れて
+    ; しまうという実運用フィードバックを受け、位置固定に変更(v1.13.0〜)。
+    ; マルチモニタ環境では「カーソルがあるモニタ」の中央に出す(Cliborと同じ挙動、v1.14.2〜)。
+    ; MonitorRectAtCursor()は範囲指定スクショ機能と共用の既存ヘルパー。
+    ; GetPosはShow()より前だと高さ0を返す(未作成ウィンドウのため)ため、まず素の座標で
+    ; 一度Showしてから実測の高さでMoveし直す2段階方式にする(実機で確認済みの地雷)。
+    launcherW := 460
+    LauncherGui.Show("w" . launcherW . " xCenter yCenter")
+    if (mr := MonitorRectAtCursor()) {
+        LauncherGui.GetPos(, , , &launcherH0)
+        launcherX := mr.l + (mr.w - launcherW) // 2
+        launcherY := mr.t + (mr.h - launcherH0) // 2
+        LauncherGui.Move(launcherX, launcherY)
+    }
     WinActivate("ahk_id " . LauncherGui.Hwnd)
     SetTimer(CheckLauncherFocus, 150)
     SetTimer(LauncherWatchDrag, 30)
