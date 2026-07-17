@@ -23,7 +23,7 @@ if A_IsCompiled
 ;  対応アプリ・送信ルールは sites.ini、定型文は snippets.ini で編集できます（同梱）。
 ;  トレイのアイコンを右クリック -> Suspend Hotkeys / Exit
 
-global AppVersion := "1.15.3"
+global AppVersion := "1.15.4"
 global CopyOnSelect := true, dragX := 0, dragY := 0, dragT := 0
 global SitesConfig := Map()
 global SiteRules := []
@@ -1055,7 +1055,11 @@ ShowLauncher() {
     FillLauncherHistoryLV(LauncherLvH)
     LauncherLvH.OnEvent("ItemSelect", LauncherHistSelect)
     LauncherTab.UseTab(2)
-    LauncherLbS := LauncherGui.Add("ListBox", "w440 r" . rows . " BackgroundFFF9E6", [])
+    ; +0x200 = LBS_NOINTEGRALHEIGHT: 付けないとListBoxが後続のMove(,,,listH)の高さ指定を
+    ; 行の高さの倍数に勝手に丸めてしまい、ListViewと同じ高さを指定してもLbSだけ実際に
+    ; 数px低くなる(実測: listH=153指定でLvH=153だがLbS=144)。ロゴがリスト下端に密着する
+    ; 前提が崩れる(実機で確認済みの地雷)。
+    LauncherLbS := LauncherGui.Add("ListBox", "w440 r" . rows . " +0x200 BackgroundFFF9E6", [])
     FillLauncherSnippetsLB(LauncherLbS)
     LauncherLbS.OnEvent("Change", (lb, *) => UseSnippetAt(ResolveSnipRow(lb.Value)))
     LauncherTab.UseTab()
@@ -1070,13 +1074,18 @@ ShowLauncher() {
         LauncherTab.GetPos(&tX, &tY, , &tH0)
         LauncherTab.Move(, , , tH0 + (listH - lvH0))
     }
-    ; ブランドロゴ: フッター(Tab3コントロールの下端に明示座標で追従)に中央揃えで表示。
-    ; リスト行数(rows)でTab3の下端が動くため、Tab3.GetPos()で実際の下端を取得してから置く(履歴/定型文
-    ; どちらのタブでも同じ位置に来る=「切替に関わらず中央」の要件はこの追従計算で満たされる)。
-    ; 画像は73x55(4:3)。wのみ指定してhは-1でアスペクト比を保たせ、横伸びを防ぐ。
-    ; 読み込み失敗時は握りつぶし、ロゴが出ないだけでランチャーは通常通り使える。
+    ; ブランドロゴ: リスト(ListView/ListBox)の実際の下端に明示座標で追従し、中央揃えで表示。
+    ; Tab3.GetPos()の下端はタブコントロール自体の余白込みでリストの下端より大きく、
+    ; そこを基準にすると「リストとロゴの間に隙間がある」ように見える(実測で確認済みの地雷)。
+    ; ListBoxはWin32側で高さ指定を行の高さの整数倍に丸める仕様があり(+0x200/LBS_NOINTEGRALHEIGHT
+    ; を付けても数px残る。実測: ListView側153指定で153だがListBox側は同じ153指定で144にしかならず、
+    ; Move()での事後補正も効かない=Win32の制約でAutoHotkey側からの回避不可)、ListViewと完全一致
+    ; させられない。大きい方(=ListView)に合わせることで、履歴タブでは隙間ゼロ、定型文タブでは
+    ; 数px程度の残余(以前の22pxからは大幅減)という現実的な妥協にしている。
     LauncherTab.GetPos(&tabX, &tabY, &tabW, &tabH)
-    footerY := tabY + tabH                        ; リスト直下に隙間なく詰める(ユーザーフィードバックで6px余白を撤去)
+    LauncherLvH.GetPos(, &lvY, , &lvH1)
+    LauncherLbS.GetPos(, &lbY, , &lbH1)
+    footerY := Max(lvY + lvH1, lbY + lbH1)
     logoW := 73, logoH := 55
     try LauncherGui.Add("Picture", "x" . (tabX + (tabW - logoW) // 2) . " y" . footerY . " w" . logoW . " h-1",
         A_ScriptDir . "\kimitolink-full-logo-73.png")
