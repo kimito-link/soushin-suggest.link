@@ -1447,8 +1447,10 @@ SaveIniKey(section, key, val) {
     if !done
         out .= (inSec ? "" : "[" . section . "]`n") . key . "=" . val . "`n"
     ; 他の書き込み箇所と同じFileDelete+FileAppend(UTF-8明示)の流儀で揃える。
-    ; (実測確認: このAHK v2実装ではFileOpen(...,"w","UTF-8")/FileAppend(...,"UTF-8")のいずれもBOMを付与しない。
-    ;  新規作成・追記・上書きの主要パターンで4象限とも先頭バイトはBOMなしだった。旧コメントの主張は誤りだったため訂正。)
+    ; (実測確認 2026-07-17: FileDelete→FileAppend(...,"UTF-8")は新規作成扱いとなりBOM(EF BB BF)を付与する。
+    ;  FileAppend(UTF-8)・FileOpen(w,UTF-8)とも新規作成時はBOM付き、FileOpen(w,UTF-8-RAW)のみBOMなし。
+    ;  既存ファイルへの追記(FileExistで削除しない経路)はBOMを増やさない。旧コメント「BOMなし」は誤りだった。
+    ;  実際 dist/snippets.ini は先頭がBOM付き。読み取り側はBOM除去(L475 RegExReplace)で吸収済みのため実害はない。)
     if FileExist(path)
         FileDelete(path)
     FileAppend(RTrim(out, "`n") . "`n", path, "UTF-8")
