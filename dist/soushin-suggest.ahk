@@ -23,7 +23,7 @@ if A_IsCompiled
 ;  対応アプリ・送信ルールは sites.ini、定型文は snippets.ini で編集できます（同梱）。
 ;  トレイのアイコンを右クリック -> Suspend Hotkeys / Exit
 
-global AppVersion := "1.14.3"
+global AppVersion := "1.15.0"
 global CopyOnSelect := true, dragX := 0, dragY := 0, dragT := 0
 global SitesConfig := Map()
 global SiteRules := []
@@ -665,12 +665,12 @@ SetCsvStatus(msg) {
 }
 
 ; ランチャー右上の歯車から開く設定メニュー。トレイメニューと同じ項目を抜粋して束ねる。
-; 「設定...」はShowSettingsWindow内で独自にタイマーを止めたまま設定ウィンドウを開いたままにするため、
+; 「設定...」「定型文の管理...」はそれぞれ自分の中でタイマーを止めたままウィンドウを開いたままにするため、
 ; m.Show()から戻った直後にここで無条件に150へ戻すと、その停止を踏みつけて即座にランチャーが
-; 閉じてしまう(設定ウィンドウにフォーカスが移った瞬間タイマーが「非アクティブ」と誤検知する)。
-; SettingsGuiが可視(=設定ウィンドウ経由でメニューを抜けた)ならタイマーは止めたままにする。
+; 閉じてしまう(相手ウィンドウにフォーカスが移った瞬間タイマーが「非アクティブ」と誤検知する)。
+; どちらかが可視(=そちらのウィンドウ経由でメニューを抜けた)ならタイマーは止めたままにする。
 ShowLauncherSettingsMenu(*) {
-    global LauncherGui, ClipWatchOn, SettingsGui
+    global LauncherGui, ClipWatchOn, SettingsGui, SnipMgrGui
     SetTimer(CheckLauncherFocus, 0)   ; メニュー表示中の誤クローズ防止(既存の履歴右クリックメニューと同じ流儀)
     m := Menu()
     m.Add("クリップボード監視を一時停止", ToggleClipWatch)
@@ -683,7 +683,8 @@ ShowLauncherSettingsMenu(*) {
         m.Check("クリップボード監視を一時停止")
     m.Show()
     settingsOpen := IsObject(SettingsGui) && DllCall("IsWindowVisible", "Ptr", SettingsGui.Hwnd)
-    if (IsObject(LauncherGui) && !settingsOpen)
+    snipMgrOpen := IsObject(SnipMgrGui) && DllCall("IsWindowVisible", "Ptr", SnipMgrGui.Hwnd)
+    if (IsObject(LauncherGui) && !settingsOpen && !snipMgrOpen)
         SetTimer(CheckLauncherFocus, 150)
 }
 
@@ -695,13 +696,31 @@ global SnipMgrStatus := 0, SnipMgrItems := [], SnipMgrClearChk := 0
 global SnipMgrTab := 0, SnipMgrHistLV := 0, SnipMgrHistEd := 0, SnipMgrHistPrev := 0
 global SnipMgrHistCount := 0, SnipMgrHistRows := []
 
+; ランチャーが開いていればその右隣(画面からはみ出るなら左隣)に、無ければ画面上の固定位置に開く。
+; ランチャーの真上に重なって隠すのを避けるため(SettingsGuiと同じフォーカス監視停止も併せて必要)。
+SnipMgrPositionArgs(w, h) {
+    global LauncherGui
+    if !IsObject(LauncherGui)
+        return "w" . w . " h" . h . " xCenter yCenter"
+    LauncherGui.GetPos(&lx, &ly, &lw, &lh)
+    mr := MonitorRectAtCursor()
+    gap := 12
+    x := lx + lw + gap
+    if (mr && x + w > mr.r)
+        x := lx - w - gap                 ; 右にはみ出るなら左隣にフォールバック
+    y := ly
+    return "w" . w . " h" . h . " x" . x . " y" . y
+}
+
 ShowSnippetManager(*) {
     global SnipMgrGui, SnipMgrLV, SnipMgrLabelEd, SnipMgrBodyEd, SnipMgrStatus, SnipMgrClearChk
-    global SnipMgrTab, SnipMgrHistLV, SnipMgrHistEd, SnipMgrHistPrev, SnipMgrHistCount
+    global SnipMgrTab, SnipMgrHistLV, SnipMgrHistEd, SnipMgrHistPrev, SnipMgrHistCount, LauncherGui
+    ; ランチャーのフォーカス監視を止める(設定ウィンドウと同じ地雷: フォーカスが移った瞬間に誤クローズする)
+    SetTimer(CheckLauncherFocus, 0)
     if SnipMgrGui {
         SnipMgrRefresh()               ; 外部編集(メモ帳/取込)を拾うため再表示時は必ず再読込
         SnipMgrHistRefresh()
-        SnipMgrGui.Show()
+        SnipMgrGui.Show(SnipMgrPositionArgs(600, 572))
         return
     }
     SnipMgrGui := Gui("+ToolWindow", "定型文の管理")
@@ -761,11 +780,19 @@ ShowSnippetManager(*) {
     ; フッター: フルロゴを右下に控えめに配置。読み込み失敗は握りつぶす(G-3と同じ流儀)
     try SnipMgrGui.Add("Picture", "x522 y528 w58 h36", A_ScriptDir . "\kimitolink-full-logo.png")
 
-    SnipMgrGui.OnEvent("Close", (*) => SnipMgrGui.Hide())
-    SnipMgrGui.OnEvent("Escape", (*) => SnipMgrGui.Hide())
+    SnipMgrGui.OnEvent("Close", (*) => HideSnipMgr())
+    SnipMgrGui.OnEvent("Escape", (*) => HideSnipMgr())
     SnipMgrRefresh()
     SnipMgrHistRefresh()
-    SnipMgrGui.Show("w600 h572")
+    SnipMgrGui.Show(SnipMgrPositionArgs(600, 572))
+}
+
+; 定型文の管理ウィンドウを閉じ、止めていたランチャーのフォーカス監視を再開する(HideSettingsWindowと同じ流儀)。
+HideSnipMgr() {
+    global SnipMgrGui, LauncherGui
+    SnipMgrGui.Hide()
+    if IsObject(LauncherGui)
+        SetTimer(CheckLauncherFocus, 150)
 }
 
 SnipMgrTabChanged(tab, *) {
@@ -962,10 +989,23 @@ LauncherFilterChanged(edit, *) {
         FillLauncherSnippetsLB(LauncherLbS, q)
 }
 
+; 検索Editのプレースホルダー(未入力時のみ表示されるグレー文字)をWin32のEM_SETCUEBANNERで設定する。
+; AutoHotkey v2にプレースホルダーの組み込みプロパティは無いため直接メッセージ送信する。
+SetLauncherSearchPlaceholder(tabValue) {
+    global LauncherSearchEdit
+    if !IsObject(LauncherSearchEdit)
+        return
+    text := (tabValue = 1) ? "りんくがコピペ履歴を検索" : "りんくが定型文を検索"
+    buf := Buffer(StrPut(text, "UTF-16"))
+    StrPut(text, buf, "UTF-16")
+    SendMessage(0x1501, 0, buf.Ptr, LauncherSearchEdit)   ; EM_SETCUEBANNER
+}
+
 ; タブ切替時、検索語が入っていれば切替先のタブにも同じ絞り込みを適用する
 ; (検索ボックスは共通1つなので、片方のタブだけ絞り込んだままにしない)。
 LauncherTabChanged(tab, *) {
     global LauncherSearchEdit, LauncherLvH, LauncherLbS
+    SetLauncherSearchPlaceholder(tab.Value)
     q := IsObject(LauncherSearchEdit) ? Trim(LauncherSearchEdit.Value) : ""
     if (q = "")
         return
@@ -991,8 +1031,12 @@ ShowLauncher() {
     gearBtn.OnEvent("Click", ShowLauncherSettingsMenu)
     LauncherGui.Add("Text", "x400 y2 w60 h12 cGray", "v" . AppVersion).SetFont("s8")   ; 掴みしろの右隣にバージョン表示
     LauncherGui.SetFont("s10")
-    LauncherSearchEdit := LauncherGui.Add("Edit", "x4 y18 w452 h22", "")
+    ; りんくアイコン(検索ボックスと同じ22x22)を左端に、検索Editをその右に配置。
+    ; プレースホルダーはアイコンのすぐ右に「りんくが○○を検索」と出す(タブ切替でSetLauncherSearchPlaceholderが差し替える)。
+    try LauncherGui.Add("Picture", "x4 y18 w22 h22", A_ScriptDir . "\rinku-search-icon-22.png")
+    LauncherSearchEdit := LauncherGui.Add("Edit", "x28 y18 w428 h22", "")
     LauncherSearchEdit.OnEvent("Change", LauncherFilterChanged)
+    SetLauncherSearchPlaceholder(1)
     LauncherGui.SetFont("s12")
     LauncherTab := LauncherGui.Add("Tab3", "x0 y44 w460 -Wrap",
         ["履歴 " . ClipHistory.Length, "定型文 " . Snippets.Length])
