@@ -23,7 +23,7 @@ if A_IsCompiled
 ;  対応アプリ・送信ルールは sites.ini、定型文は snippets.ini で編集できます（同梱）。
 ;  トレイのアイコンを右クリック -> Suspend Hotkeys / Exit
 
-global AppVersion := "1.13.0"
+global AppVersion := "1.14.0"
 global CopyOnSelect := true, dragX := 0, dragY := 0, dragT := 0
 global SitesConfig := Map()
 global SiteRules := []
@@ -32,6 +32,9 @@ global ClipHistory := [], ClipHistoryMax := 30   ; {text,time}の配列・メモ
 ; 経緯は_docs/CLIPBOARD-HISTORY-FOLDER-ARCHIVE-DESIGN.md参照
 global LongPressSec := 0.35     ; sites.ini [general] longpress= で上書き可
 global LauncherGui := 0, LauncherTarget := 0, LauncherTab := 0, Snippets := [], LauncherDragBar := 0, LauncherLvH := 0, LauncherLbS := 0, LauncherHoverLast := ""
+global LauncherSearchEdit := 0                ; 検索ボックス(履歴/定型文タブ共通、内容で絞り込み)
+global LauncherHistFilterMap := []            ; 表示行(1始まり) → ClipHistoryの実インデックス。フィルタ無しなら1:1
+global LauncherSnipFilterMap := []            ; 表示行(1始まり) → Snippetsの実インデックス。フィルタ無しなら1:1
 global ClipWatchOn := true                ; トレイから一時停止可
 global LastUserCopyTick := 0              ; ^c/^x/^Ins・なぞってコピー送信の時刻
 global LastLButtonUpTick := 0             ; 右クリックメニュー「コピー」等のクリック由来を救う
@@ -943,13 +946,35 @@ SnipMgrImport(*) {
     SnipMgrRefresh()
 }
 
+; 検索ボックスの入力変更で発火。現在のタブの一覧だけを絞り込み直す(もう一方は次回タブ切替時に絞り込む)。
+; 絞り込み後は選択行が動くため数字キー対応の見た目上の番号もFillLauncher*で振り直される。
+LauncherFilterChanged(edit, *) {
+    global LauncherTab, LauncherLvH, LauncherLbS
+    q := Trim(edit.Value)
+    if (LauncherTab.Value = 1)
+        FillLauncherHistoryLV(LauncherLvH, q)
+    else
+        FillLauncherSnippetsLB(LauncherLbS, q)
+}
+
+; タブ切替時、検索語が入っていれば切替先のタブにも同じ絞り込みを適用する
+; (検索ボックスは共通1つなので、片方のタブだけ絞り込んだままにしない)。
+LauncherTabChanged(tab, *) {
+    global LauncherSearchEdit, LauncherLvH, LauncherLbS
+    q := IsObject(LauncherSearchEdit) ? Trim(LauncherSearchEdit.Value) : ""
+    if (q = "")
+        return
+    (tab.Value = 1) ? FillLauncherHistoryLV(LauncherLvH, q) : FillLauncherSnippetsLB(LauncherLbS, q)
+}
+
 ShowLauncher() {
-    global ClipHistory, LauncherGui, LauncherTarget, Snippets, LauncherTab, LauncherDragBar, LauncherLvH, LauncherLbS, LauncherHoverLast, ClipWatchOn, AppVersion
+    global ClipHistory, LauncherGui, LauncherTarget, Snippets, LauncherTab, LauncherDragBar, LauncherLvH, LauncherLbS, LauncherHoverLast, ClipWatchOn, AppVersion, LauncherSearchEdit, LauncherHistFilterMap, LauncherSnipFilterMap
     Snippets := LoadSnippets()                ; 開くたびに読む: iniを編集→次の長押しで即反映
     if (ClipHistory.Length = 0 && Snippets.Length = 0) {
         Flash("履歴がありません（コピーすると貯まります）", 1800)
         return
     }
+    LauncherHistFilterMap := [], LauncherSnipFilterMap := []   ; 前回開いたときの絞り込み状態を持ち越さない
     LauncherTarget := WinExist("A")
     CloseLauncher()
     LauncherGui := Gui("-Caption +AlwaysOnTop +ToolWindow +Border")
@@ -960,9 +985,13 @@ ShowLauncher() {
     gearBtn.SetFont("s10")
     gearBtn.OnEvent("Click", ShowLauncherSettingsMenu)
     LauncherGui.Add("Text", "x400 y2 w60 h12 cGray", "v" . AppVersion).SetFont("s8")   ; 掴みしろの右隣にバージョン表示
+    LauncherGui.SetFont("s10")
+    LauncherSearchEdit := LauncherGui.Add("Edit", "x4 y18 w452 h22", "")
+    LauncherSearchEdit.OnEvent("Change", LauncherFilterChanged)
     LauncherGui.SetFont("s12")
-    LauncherTab := LauncherGui.Add("Tab3", "x0 y16 w460 -Wrap",
+    LauncherTab := LauncherGui.Add("Tab3", "x0 y44 w460 -Wrap",
         ["履歴 " . ClipHistory.Length, "定型文 " . Snippets.Length])
+    LauncherTab.OnEvent("Change", LauncherTabChanged)
     rows := Min(Max(ClipHistory.Length, Snippets.Length, 3), 10)
     LauncherTab.UseTab(1)
     ; 履歴タブ: ListView化(1列・ヘッダなし)。+0x40=LVS_SHAREIMAGELISTS が生命線:
@@ -977,11 +1006,9 @@ ShowLauncher() {
     FillLauncherHistoryLV(LauncherLvH)
     LauncherLvH.OnEvent("ItemSelect", LauncherHistSelect)
     LauncherTab.UseTab(2)
-    snipItems := []
-    for i, s in Snippets
-        snipItems.Push((i <= 10 ? Mod(i, 10) . " " : "   ") . (SubStr(s.value, 1, 4) = "run:" ? "▶ " : "") . s.label)
-    LauncherLbS := LauncherGui.Add("ListBox", "w440 r" . rows . " BackgroundFFF9E6", snipItems)
-    LauncherLbS.OnEvent("Change", (lb, *) => UseSnippetAt(lb.Value))
+    LauncherLbS := LauncherGui.Add("ListBox", "w440 r" . rows . " BackgroundFFF9E6", [])
+    FillLauncherSnippetsLB(LauncherLbS)
+    LauncherLbS.OnEvent("Change", (lb, *) => UseSnippetAt(ResolveSnipRow(lb.Value)))
     LauncherTab.UseTab()
     if (ClipHistory.Length = 0)
         LauncherTab.Value := 2                        ; 履歴が空なら定型文タブで開く
@@ -1006,12 +1033,22 @@ ShowLauncher() {
     LauncherGui.Add("Text", "x0 y" . footerY . " w1 h40")   ; ロゴ行の高さをウィンドウ計算に含めるための透明スペーサ
     LauncherGui.OnEvent("Escape", (*) => CloseLauncher())
     LauncherGui.OnEvent("ContextMenu", LauncherContextMenu)
-    MouseGetPos &mx, &my
-    LauncherGui.Show("x" . mx . " y" . my)   ; Cliborと同じく毎回カーソル位置に開く（位置固定はしない）
+    ; 画面上の固定位置に開く(プライマリモニタ中央)。マウスカーソルが画面下部にあると
+    ; 追従表示では毎回隠れてしまうという実運用フィードバックを受け、位置固定に変更(v1.13.0〜)。
+    LauncherGui.Show("w460 xCenter yCenter")
     WinActivate("ahk_id " . LauncherGui.Hwnd)
     SetTimer(CheckLauncherFocus, 150)
     SetTimer(LauncherWatchDrag, 30)
     LauncherHoverLast := "", SetTimer(LauncherWatchHover, 120)
+}
+
+; 表示行(ListView/数字キー由来の1始まり行番号) → ClipHistoryの実インデックス。
+; LauncherHistFilterMapが空(検索未使用)なら1:1のまま素通しする。
+ResolveHistRow(displayRow) {
+    global LauncherHistFilterMap
+    if (LauncherHistFilterMap.Length = 0)
+        return displayRow
+    return (displayRow >= 1 && displayRow <= LauncherHistFilterMap.Length) ? LauncherHistFilterMap[displayRow] : 0
 }
 
 PasteHistoryAt(idx) {
@@ -1027,7 +1064,16 @@ PasteHistoryAt(idx) {
 LauncherHistSelect(lv, row, selected) {
     if (!selected || GetKeyState("RButton", "P"))   ; 選択解除時と、右クリック由来の選択では発火させない
         return
-    PasteHistoryAt(row)
+    PasteHistoryAt(ResolveHistRow(row))
+}
+
+; 表示行(ListBox/数字キー由来の1始まり行番号) → Snippetsの実インデックス。
+; LauncherSnipFilterMapが空(検索未使用)なら1:1のまま素通しする。
+ResolveSnipRow(displayRow) {
+    global LauncherSnipFilterMap
+    if (LauncherSnipFilterMap.Length = 0)
+        return displayRow
+    return (displayRow >= 1 && displayRow <= LauncherSnipFilterMap.Length) ? LauncherSnipFilterMap[displayRow] : 0
 }
 
 UseSnippetAt(idx) {
@@ -1962,10 +2008,10 @@ LauncherWatchHover() {
     ; Tab3は非アクティブなタブの子コントロールも実体を保持し続けるため、アクティブタブでヒットテストを
     ; 限定しないと、履歴タブ表示中でも裏に隠れた定型文ListBoxの内容がツールチップに出てしまう。
     if (LauncherTab.Value = 1) {
-        if (idx := LauncherLVItemUnderMouse(LauncherLvH)) && idx <= ClipHistory.Length
+        if (idx := ResolveHistRow(LauncherLVItemUnderMouse(LauncherLvH))) && idx <= ClipHistory.Length
             tip := ClipHistory[idx].time . " にコピー`n" . SubStr(ClipHistory[idx].text, 1, 600)
     } else {
-        if (idx := LauncherItemUnderMouse(LauncherLbS)) && idx <= Snippets.Length
+        if (idx := ResolveSnipRow(LauncherItemUnderMouse(LauncherLbS))) && idx <= Snippets.Length
             tip := SubStr(Snippets[idx].value, 1, 600)
     }
     if (tip != LauncherHoverLast) {
@@ -1978,7 +2024,7 @@ LauncherWatchHover() {
 LauncherContextMenu(g, ctrl, item, isRC, x, y) {
     global LauncherLvH, ClipHistory, LauncherGui
     if (ctrl = LauncherLvH) {
-        idx := LauncherLVItemUnderMouse(LauncherLvH)
+        idx := ResolveHistRow(LauncherLVItemUnderMouse(LauncherLvH))
         if (idx < 1 || idx > ClipHistory.Length)
             return
         SetTimer(CheckLauncherFocus, 0)       ; メニュー表示中の誤クローズ防止(必須)
@@ -2048,10 +2094,11 @@ ToggleClipWatch(name, *) {
 }
 
 RefreshLauncherHistory() {
-    global LauncherGui, LauncherLvH, LauncherTab, ClipHistory
+    global LauncherGui, LauncherLvH, LauncherTab, ClipHistory, LauncherSearchEdit
     if !IsObject(LauncherGui)
         return
-    FillLauncherHistoryLV(LauncherLvH)
+    q := IsObject(LauncherSearchEdit) ? Trim(LauncherSearchEdit.Value) : ""
+    FillLauncherHistoryLV(LauncherLvH, q)   ; 検索中の追加/削除でも絞り込み語を維持する
     SetTabLabel(LauncherTab, 1, "履歴 " . ClipHistory.Length)
 }
 
@@ -2068,15 +2115,42 @@ SetTabLabel(tabCtrl, index, text) {
     SendMessage(TCM_SETITEM, index - 1, tcitem.Ptr, tabCtrl)   ; 0-based index
 }
 
+; ShowLauncherのListBox初期化とLauncherFilterChangedで共用。ラベル/本文どちらかに部分一致すれば残す。
+; ClipHistory側のFillLauncherHistoryLVと同じ「表示行→実インデックス」マップ方式。
+FillLauncherSnippetsLB(lb, query := "") {
+    global Snippets, LauncherSnipFilterMap
+    LauncherSnipFilterMap := []
+    items := []
+    for i, s in Snippets {
+        if (query != "" && !InStr(s.label, query) && !InStr(s.value, query))
+            continue
+        LauncherSnipFilterMap.Push(i)
+        dispRow := LauncherSnipFilterMap.Length
+        items.Push((dispRow <= 10 ? Mod(dispRow, 10) . " " : "   ") . (SubStr(s.value, 1, 4) = "run:" ? "▶ " : "") . s.label)
+    }
+    lb.Delete()
+    if (items.Length)
+        lb.Add(items)
+}
+
 ; ShowLauncherとRefreshLauncherHistoryで共用。11件目以降は番号なし(数字キー対象外)。
 ; Icon0省略不可(省略すると全行に1枚目が出る既知の仕様。SnipMgrHistRefreshと同じ)
-FillLauncherHistoryLV(lv) {
-    global ClipHistory
+; query != ""のときは本文に部分一致する行だけを表示し、LauncherHistFilterMapに
+; 「表示行(1始まり) → ClipHistoryの実インデックス」を積む。数字キー/クリック選択は
+; 表示行番号で来るため、呼び出し側(PasteHistoryAt等)の手前でこのマップを経由して実インデックスへ変換する。
+FillLauncherHistoryLV(lv, query := "") {
+    global ClipHistory, LauncherHistFilterMap
     lv.Opt("-Redraw")
     lv.Delete()
+    LauncherHistFilterMap := []
+    dispRow := 0
     for i, v in ClipHistory {
         s := RegExReplace(v.text, "\s+", " ")
-        txt := (i <= 10 ? Mod(i, 10) . " " : "   ") . (StrLen(s) > 58 ? SubStr(s, 1, 58) . "…" : s)
+        if (query != "" && !InStr(s, query))
+            continue
+        dispRow += 1
+        LauncherHistFilterMap.Push(i)
+        txt := (dispRow <= 10 ? Mod(dispRow, 10) . " " : "   ") . (StrLen(s) > 58 ? SubStr(s, 1, 58) . "…" : s)
         lv.Add((v.type = "image") ? "Icon" . (HistThumbIndex(v) + 1) : "Icon0", txt)
     }
     lv.Opt("+Redraw")
@@ -2108,9 +2182,9 @@ PromoteHistoryAt(idx) {
 LauncherPickKey(hk, *) {
     n := (hk = "0") ? 10 : Integer(hk)
     if (LauncherTab.Value = 1)
-        PasteHistoryAt(n)
+        PasteHistoryAt(ResolveHistRow(n))
     else
-        UseSnippetAt(n)
+        UseSnippetAt(ResolveSnipRow(n))
 }
 
 ; --- 起動時 ---
