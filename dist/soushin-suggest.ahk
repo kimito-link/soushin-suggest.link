@@ -724,7 +724,7 @@ ShowSnippetManager(*) {
     if SnipMgrGui {
         SnipMgrRefresh()               ; 外部編集(メモ帳/取込)を拾うため再表示時は必ず再読込
         SnipMgrHistRefresh()
-        SnipMgrGui.Show(SnipMgrPositionArgs(600, 590))
+        SnipMgrGui.Show(SnipMgrPositionArgs(600, 609))
         SetTimer(SnipMgrWatchDrag, 30)
         return
     }
@@ -785,6 +785,9 @@ ShowSnippetManager(*) {
     SnipMgrTab.UseTab()   ; 必須: 以降のステータス行を両タブ共通にする
     SnipMgrStatus := SnipMgrGui.Add("Text", "x10 y518 w400 h20 cGray", "")
     ; ブランドロゴ: ランチャーと同じ73x55を下部中央1箇所に統一(v1.16.0〜。以前は右上マーク+右下ロゴの2箇所に分散していた)。
+    ; ステータス行(y518 h20→下端538)の直下・8px空けてy546に置いていたが、ロゴ高55pxを
+    ; ウィンドウ高590に足すと601となり11pxはみ出て灰色背景から尻尾が出ていた(実機で発覚)。
+    ; ウィンドウ高を601+下マージン8=609に伸ばして収める(座標側は変えない)。
     ; 読み込み失敗(ファイル欠落等)は機能に影響しないよう握りつぶす
     try SnipMgrGui.Add("Picture", "x264 y546 w73 h-1", A_ScriptDir . "\kimitolink-full-logo-73.png")
 
@@ -792,7 +795,7 @@ ShowSnippetManager(*) {
     SnipMgrGui.OnEvent("Escape", (*) => HideSnipMgr())
     SnipMgrRefresh()
     SnipMgrHistRefresh()
-    SnipMgrGui.Show(SnipMgrPositionArgs(600, 590))
+    SnipMgrGui.Show(SnipMgrPositionArgs(600, 609))
     SetTimer(SnipMgrWatchDrag, 30)
 }
 
