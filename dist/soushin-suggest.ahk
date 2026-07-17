@@ -23,7 +23,7 @@ if A_IsCompiled
 ;  対応アプリ・送信ルールは sites.ini、定型文は snippets.ini で編集できます（同梱）。
 ;  トレイのアイコンを右クリック -> Suspend Hotkeys / Exit
 
-global AppVersion := "1.14.0"
+global AppVersion := "1.14.1"
 global CopyOnSelect := true, dragX := 0, dragY := 0, dragT := 0
 global SitesConfig := Map()
 global SiteRules := []
@@ -1742,8 +1742,12 @@ CommitPendingArchive() {
 ; チェックボックス+短い説明文を並べるだけの単一画面。SnipMgrGuiと同じシングルトンパターン。
 global SettingsGui := 0, SettingsChkImage := 0, SettingsChkText := 0, SettingsChkStartup := 0, SettingsChkWatch := 0
 
+; 設定ウィンドウを開いている間、ランチャーのフォーカス監視(CheckLauncherFocus)を止める。
+; 止めないとランチャー→設定ウィンドウへフォーカスが移った瞬間に「アクティブでなくなった」と
+; 誤検知してランチャーごと閉じてしまう(右クリックメニュー表示中と同じ地雷・既存の対処と同じ流儀)。
 ShowSettingsWindow(*) {
-    global SettingsGui, SettingsChkImage, SettingsChkText, SettingsChkStartup, SettingsChkWatch, ClipArchiveImage, ClipArchiveText, ClipWatchOn
+    global SettingsGui, SettingsChkImage, SettingsChkText, SettingsChkStartup, SettingsChkWatch, ClipArchiveImage, ClipArchiveText, ClipWatchOn, LauncherGui
+    SetTimer(CheckLauncherFocus, 0)
     if SettingsGui {
         SettingsChkImage.Value := ClipArchiveImage
         SettingsChkText.Value := ClipArchiveText
@@ -1776,12 +1780,21 @@ ShowSettingsWindow(*) {
         "保存先: clip-archive\history（CSV形式）`nパスワード等を扱う際はOFFのままにしてください")
 
     SettingsGui.Add("Button", "x20 y232 w150 h28", "保存フォルダを開く").OnEvent("Click", OpenArchiveDir)
-    SettingsGui.Add("Button", "x290 y232 w100 h28", "閉じる").OnEvent("Click", (*) => SettingsGui.Hide())
+    SettingsGui.Add("Button", "x290 y232 w100 h28", "閉じる").OnEvent("Click", (*) => HideSettingsWindow())
     ; ブランドロゴ: 他ウィンドウ(定型文の管理)と同じ流儀でフッターに控えめに配置。読み込み失敗は握りつぶす
     try SettingsGui.Add("Picture", "x20 y270 w58 h36", A_ScriptDir . "\kimitolink-full-logo.png")
-    SettingsGui.OnEvent("Close", (*) => SettingsGui.Hide())
-    SettingsGui.OnEvent("Escape", (*) => SettingsGui.Hide())
+    SettingsGui.OnEvent("Close", (*) => HideSettingsWindow())
+    SettingsGui.OnEvent("Escape", (*) => HideSettingsWindow())
     SettingsGui.Show("w400 h316")
+}
+
+; 設定ウィンドウを閉じ、止めていたランチャーのフォーカス監視を再開する。
+; ランチャーが既に閉じられている場合はCheckLauncherFocus自身が自己解除するので無害。
+HideSettingsWindow() {
+    global SettingsGui, LauncherGui
+    SettingsGui.Hide()
+    if IsObject(LauncherGui)
+        SetTimer(CheckLauncherFocus, 150)
 }
 
 ; 設定ウィンドウのチェックボックスから起動登録を切り替える。トレイに同項目はない(v1.13.0で設定ウィンドウへ一本化)ため
