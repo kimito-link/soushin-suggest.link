@@ -25,30 +25,37 @@
 
 **(f) 症状の切り分け上の重要な区別**: 「Win+Vパネルが開かない」は、(1) UIホスト(explorer側)の問題、(2) `cbdhsvc`(実体サービス)の問題、の2層がありうる。explorer再起動で直った実績はUI層、PC再起動が必要だったケースはサービス層を示唆する。**発生時にどちらだったかを毎回記録する**こと自体が診断データになる。
 
-## 1.5 実証拠1件目(2026-07-17 19:57、`_docs/winv-ab-test-log.md`参照)
+## 1.5 実証拠(`_docs/winv-ab-test-log.md`に全件記録)
 
-Chrome拡張ON・**soushin-suggestは`not running`**の状態で自然発生(意図的なA/Bテストではなく偶然)。
-`clip-incident.ps1`の結果: `GetOpenClipboardWindow`は「誰も掴んでいない」(保持ロック型ではない)。
-`cbdhsvc`はRunning状態(サービス自体はクラッシュしていない)。Applicationログにもエラーなし。
+**2件連続で発生・記録済み(2026-07-17 19:57、21:58)。** 両方とも:
+- `clip-incident.ps1`の`GetOpenClipboardWindow`は「誰も掴んでいない」(保持ロック型ではない)
+- `cbdhsvc`はRunning状態(サービス自体はクラッシュしていない)。Applicationログにもエラーなし
+- **`Get-Service cbdhsvc* | Restart-Service -Force`は「サービスを開けません」という権限エラーで失敗**
+  (per-userサービスは通常のユーザー権限では停止できない。管理者PowerShellでも同じエラーだった)
+- **`Stop-Process -Name explorer -Force`で直った**(2件とも)
 
-**復旧: `Get-Service cbdhsvc* | Restart-Service -Force`では直らず、`Stop-Process -Name explorer -Force`で直った。**
+1件目はsoushin-suggestが`not running`、2件目は`running`の状態でそれぞれ発生。
 
-この1件から言えること:
-1. **AHK(soushin-suggest)が動いていない状態でも発生した** → 今回の発生に関してAHKは無実。ただし
-   「AHKが原因の一つ」という仮説自体を完全に排除するものではない(AHKが動いている時の方が
-   頻度が高い可能性は残るため、A/Bテストの継続は引き続き必要)
-2. **cbdhsvc再起動が効かずexplorer再起動が効いた** → §1(f)で想定した2層のうち、
-   **cbdhsvc本体ではなくExplorerシェル(UIホスト)側**に障害があった可能性が高い。
-   次回以降も両方を順番に試し、「どちらで直ったか」の記録を積み重ねることで、
-   この傾向(explorer側が本丸)が一貫するか確認する
+この2件から言えること:
+1. **AHK(soushin-suggest)の有無に関わらず発生する** → AHK側の関与は薄いと見てよい方向に証拠が
+   積み上がっている。ただし決定的な棄却ではなく、A/Bテストの継続で頻度差を見ることが引き続き有効
+2. **cbdhsvc再起動は2件とも権限エラーで実行不能、explorer再起動は2件とも成功** → §1(f)で想定した
+   2層のうち、**cbdhsvc本体ではなくExplorerシェル(UIホスト)側**に障害がある、という見立てが
+   一貫して裏付けられている。実用上は最初からexplorer再起動を試す方が速い(§2で反映)
+3. 2件目では発生直前(21:22台)にChromeプロセスが複数同時起動した形跡があった
+   (拡張のservice worker再起動かタブ大量リロードの可能性。件数が増えたら要継続観察)
 
 ## 2. 今すぐできる応急運用(原因特定と無関係に運用可能)
 
 発生したら以下のエスカレーションで復旧する。**ただし§3 Phase 2の証拠採取を先に実行してから**復旧すること。
 
-1. **cbdhsvcの再起動を試す**(管理者PowerShell): `Get-Service cbdhsvc* | Restart-Service -Force`(per-userサービスなので拒否されることがある)
-2. **explorer再起動**: `Stop-Process -Name explorer -Force`(通常は自動再起動)
-3. それでもだめならPC再起動
+1. **explorer再起動**(管理者PowerShell): `Stop-Process -Name explorer -Force`(通常は自動再起動)。
+   実証拠2件とも、これで直っている(§1.5参照)。まずこれを試すのが最速
+2. それでもだめならPC再起動
+
+参考: `Get-Service cbdhsvc* | Restart-Service -Force`は理論上の選択肢として設計時に想定していたが、
+実証拠2件とも「サービスを開けません」という権限エラーで実行できなかった(per-userサービスは
+管理者PowerShellでも通常操作を拒否される)。優先度を下げ、上記の手順からは外した。
 
 補足: Win+Vが死んでいても通常のCtrl+C/Vは大抵生きている。soushin-suggest自身がクリップボード履歴UIを持っているので、業務継続の観点ではWin+V死亡は即致命ではない。焦らず証拠採取を優先できる。
 
