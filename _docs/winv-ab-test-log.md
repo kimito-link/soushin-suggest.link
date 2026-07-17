@@ -13,7 +13,7 @@
 
 | 日時 | 条件(A/B/C/D) | Win+V結果(○開いた/×開かなかった) | 直った方法(cbdhsvc再起動/explorer再起動/PC再起動/該当なし) | clip-incident出力ファイル | メモ |
 |---|---|---|---|---|---|
-| | | | | | |
+| 2026-07-17 19:57 | **B相当(意図せず発生)**: Chrome拡張ON・soushin-suggestは`not running` | × 一度開いたが、以後Win+Vを押しても無反応(パネル自体が起動しない) | **explorer再起動で直った**(cbdhsvc再起動は試したが効かなかった) | clip-incident-20260717-195708.txt | **重要**: soushin-suggestが完全に停止している状態で発生 → AHK非関与の証拠。GetOpenClipboardWindowは「誰も掴んでいない」(保持ロック型ではない)。cbdhsvc_2f8e49はRunning(サービス自体はクラッシュしていない)。ApplicationログにもエラーなしOSビルド26200(25H2)。Chromeプロセスは通常運転(タブ/service worker由来の多数プロセス)。**cbdhsvc再起動では直らずexplorer再起動で直った**→障害の層はcbdhsvc本体ではなくExplorerシェル側(UIホスト層)にある可能性が高い |
 
 <!-- 記入例:
 | 2026-07-18 09:00 | A | ○ | - | - | 通常確認、問題なし |
