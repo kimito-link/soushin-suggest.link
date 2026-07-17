@@ -23,7 +23,7 @@ if A_IsCompiled
 ;  対応アプリ・送信ルールは sites.ini、定型文は snippets.ini で編集できます（同梱）。
 ;  トレイのアイコンを右クリック -> Suspend Hotkeys / Exit
 
-global AppVersion := "1.17.0"
+global AppVersion := "1.18.0"
 global CopyOnSelect := true, dragX := 0, dragY := 0, dragT := 0
 global SitesConfig := Map()
 global SiteRules := []
@@ -31,8 +31,11 @@ global SiteRules := []
 ; 破棄ロジック(PushClipHistory/PushClipImageのwhile ClipHistory.Length > ClipHistoryMax)は
 ; そのまま残し、事実上発火しない大きさにしているだけ(sites.ini [clipboard] max= で今も上書き可能)。
 global ClipHistory := [], ClipHistoryMax := 999999   ; {text,time}の配列・メモリのみ
-; 既定は非永続。archiveimage/archivetextトグルによる明示オプトイン例外あり(検疫付き・既定OFF)。
-; 経緯は_docs/CLIPBOARD-HISTORY-FOLDER-ARCHIVE-DESIGN.md参照
+; v1.18.0〜Cliborと同じ「常時記録・永続保存」に既定を合わせ、archive.text/archive.image/
+; history.persistは既定ONに変更(ユーザー明示指示)。パスワード自動クリア連動の検疫は無変更で
+; 効き続けるが、検疫は「パスワードマネージャーでコピー→自動クリア」という手順を踏んだ場合しか
+; 守れず、手入力パスワードの確認コピー等までは守れない残余リスクが常時有効になる前提で採用。
+; 経緯は_docs/CLIPBOARD-HISTORY-FOLDER-ARCHIVE-DESIGN.md、_docs/CLIPBOARD-HISTORY-PERSISTENT-STORE-DESIGN.md参照
 global LongPressSec := 0.35     ; sites.ini [general] longpress= で上書き可
 global LauncherGui := 0, LauncherTarget := 0, LauncherTab := 0, Snippets := [], LauncherDragBar := 0, LauncherLvH := 0, LauncherLbS := 0, LauncherHoverLast := ""
 global LauncherSearchEdit := 0                ; 検索ボックス(履歴/定型文タブ共通、内容で絞り込み)
@@ -48,11 +51,15 @@ global ClipAutoClearSec := 45, ClipMaxLen := 100000
 global ClipExcludeExes := Map("keepass.exe",1, "keepassxc.exe",1, "1password.exe",1, "bitwarden.exe",1)
 global ClipImageMax := 5, ClipImageMaxBytes := 36 * 1024 * 1024   ; 画像専用の件数上限・4Kスクショ程度まで許容
 global ClipImageMinPx := 32                ; 幅/高さがこれ未満の極小画像(ノイズ)は履歴に記録しない
-global ClipArchiveImage := false, ClipArchiveText := false, ClipArchiveDir := ""   ; 既定OFF・オプトイン
+; v1.18.0〜: Cliborと同じ「常時記録・永続保存」に既定を合わせる(ユーザー明示指示)。
+; 検疫(パスワード自動クリア連動)は既定ON化後も無変更で効き続けるが、検疫が守れるのは
+; 「パスワードマネージャーでコピー→自動クリア」という手順を踏んだ場合に限られ、手入力した
+; パスワードの確認コピー等までは守れない残余リスクが常時有効になる、という前提を明示指示の上で採用。
+global ClipArchiveImage := true, ClipArchiveText := true, ClipArchiveDir := ""
 global PendingArchive := []                ; テキストの検疫待ち配列 {text, tick}(45秒+2秒で確定保存)
-; 履歴の再起動を跨いだ永続化(v1.17.0〜)。既定OFF・検疫は完全維持(ディスク書き込み地点は
-; CommitPendingArchive内の1箇所のまま)。経緯は_docs/CLIPBOARD-HISTORY-PERSISTENT-STORE-DESIGN.md参照
-global ClipHistoryPersist := false, ClipHistLoadMax := 10000
+; 履歴の再起動を跨いだ永続化。検疫は完全維持(ディスク書き込み地点はCommitPendingArchive内の
+; 1箇所のまま)。経緯は_docs/CLIPBOARD-HISTORY-PERSISTENT-STORE-DESIGN.md参照
+global ClipHistoryPersist := true, ClipHistLoadMax := 10000
 global HistStoreLoadState := 0             ; 分割パースの進行状態オブジェクト(0=停止)
 global HistStoreRewritePending := false    ; 項目削除後のストア書き直し予約フラグ
 
@@ -1368,6 +1375,7 @@ UseSnippetAt(idx) {
         return
     s := Snippets[idx]
     CloseLauncher()
+    PromoteSnippetToTop(s.label)   ; 使うたびに先頭へ(ココナラ/Chatworkの「直近が上」と同じ直近使用順)
     if (SubStr(s.value, 1, 4) = "run:") {
         target := Trim(SubStr(s.value, 5))
         try Run(target)
@@ -1376,6 +1384,40 @@ UseSnippetAt(idx) {
         return
     }
     PasteText(s.value)
+}
+
+; 定型文を使うたびにsnippets.iniの先頭行へ移動する(直近使用順)。ラベルで該当行を特定し、
+; その行だけを削除して先頭に挿し直す(他の行の並びは相対的にそのまま・全文書き直しはしない)。
+; 失敗は握りつぶす(fail-closed: 並び替えの失敗でペースト自体を止めない)。
+PromoteSnippetToTop(label) {
+    try {
+        path := A_ScriptDir . "\snippets.ini"
+        ; BOM付きで保存されたsnippets.ini(手編集・他ツール由来)にも対応するため明示除去(G-10相当)
+        text := RegExReplace(FileRead(path, "UTF-8"), "^\x{FEFF}")
+        lines := StrSplit(text, "`n", "`r")
+        target := 0
+        for n, raw in lines {
+            line := Trim(raw)
+            if (line = "" || SubStr(line, 1, 1) = ";" || SubStr(line, 1, 1) = "[")
+                continue
+            eq := InStr(line, "=")
+            if (eq && Trim(SubStr(line, 1, eq - 1)) = label) {
+                target := n
+                break
+            }
+        }
+        if (target = 0 || target = 1)   ; 見つからない、または既に先頭なら何もしない
+            return
+        line := lines[target]
+        lines.RemoveAt(target)
+        lines.InsertAt(1, line)
+        out := ""
+        for l in lines
+            out .= l . "`n"
+        FileDelete(path)
+        FileAppend(RTrim(out, "`n") . "`n", path, "UTF-8")
+        ArchiveSnippetsCsv()
+    }
 }
 
 PasteText(text) {
@@ -1736,12 +1778,13 @@ DibBitsOffset(dib) {
     return (off < dib.Size) ? off : 0
 }
 
-; --- クリップボード履歴のフォルダ永続保存(既定OFF・オプトイン例外) ---
-; 非永続の原則を覆す唯一の経路。安全側の設計は3点:
-; (1) 既定OFF・ON時は警告ダイアログ (2) テキストは検疫(45秒+2秒)を通過したものだけ書く
-;     ＝自動クリア機構がそのままディスク書き込みの拒否権として働く (3) 画像は検疫なし即保存
-;     (自動クリアはテキストのみ追跡するため対象外。スクショは能動的な成果物で脅威モデルが違う)
-; 経緯・矛盾解消の論理は_docs/CLIPBOARD-HISTORY-FOLDER-ARCHIVE-DESIGN.md参照
+; --- クリップボード履歴のフォルダ永続保存(v1.18.0〜既定ON。Cliborと同じ常時保存に合わせた) ---
+; 非永続の原則を覆す経路。安全側の設計は2点:
+; (1) テキストは検疫(45秒+2秒)を通過したものだけ書く＝自動クリア機構がそのままディスク書き込みの
+;     拒否権として働く (2) 画像は検疫なし即保存(自動クリアはテキストのみ追跡するため対象外。
+;     スクショは能動的な成果物で脅威モデルが違う)
+; 既定ON化に伴いOFFへの切替はいつでも設定ウィンドウから可能(手動OFF時は保存済みファイルの
+; 削除確認あり)。経緯・矛盾解消の論理は_docs/CLIPBOARD-HISTORY-FOLDER-ARCHIVE-DESIGN.md参照
 
 ; --- SettingsStore: プログラム専有のsettings.iniを唯一の書き手として全文再生成する。 ---
 ; 所有権分離の核: sites.ini/snippets.iniは人間所有(既存のFileDelete+FileAppend(UTF-8)流儀を維持)、
@@ -1777,20 +1820,17 @@ ApplyHistLoadMaxSetting(v) {
     n := Integer(v)
     ClipHistLoadMax := (n > 0) ? Max(100, Min(n, 100000)) : 10000   ; 異常値はクランプ(fail-closed)
 }
-ApplyHistPersistPromptedSetting(v) {
-}
 
 ; キー → {section, default, apply(val)}。GUIとsettings.iniのグルーピングの単一の正本。
 SettingDefsInit() {
     global SettingDefs
     SettingDefs := Map(
         "clipboard.watch", {section: "clipboard", default: "on", apply: ApplyClipWatchSetting},
-        "archive.image", {section: "archive", default: "off", apply: ApplyArchiveImageSetting},
-        "archive.text", {section: "archive", default: "off", apply: ApplyArchiveTextSetting},
+        "archive.image", {section: "archive", default: "on", apply: ApplyArchiveImageSetting},
+        "archive.text", {section: "archive", default: "on", apply: ApplyArchiveTextSetting},
         "state.firstrunprompted", {section: "state", default: "0", apply: ApplyFirstRunPromptedSetting},
-        "history.persist", {section: "history", default: "off", apply: ApplyHistoryPersistSetting},
-        "history.loadmax", {section: "history", default: "10000", apply: ApplyHistLoadMaxSetting},
-        "state.histpersistprompted", {section: "state", default: "0", apply: ApplyHistPersistPromptedSetting}
+        "history.persist", {section: "history", default: "on", apply: ApplyHistoryPersistSetting},
+        "history.loadmax", {section: "history", default: "10000", apply: ApplyHistLoadMaxSetting}
     )
 }
 global SettingDefs := Map()
@@ -2156,7 +2196,7 @@ ShowSettingsWindow(*) {
     SettingsChkWatch.Value := ClipWatchOn
     SettingsChkWatch.OnEvent("Click", (*) => ApplyClipWatchToggle(SettingsChkWatch))
 
-    SettingsGui.Add("GroupBox", "x10 y92 w380 h130", "フォルダ保存（既定はOFF・保存すると元に戻せません）")
+    SettingsGui.Add("GroupBox", "x10 y92 w380 h130", "フォルダ保存（既定はON・パスワード自動クリアで消えたものは保存されません）")
     SettingsChkImage := SettingsGui.Add("CheckBox", "x20 y114 w360", "スクショ（コピーした画像）をフォルダに保存する")
     SettingsChkImage.Value := ClipArchiveImage
     SettingsChkImage.OnEvent("Click", (*) => ApplyArchiveToggle("image", SettingsChkImage))
@@ -2170,7 +2210,7 @@ ShowSettingsWindow(*) {
 
     ; 履歴の永続化(v1.17.0〜)。フォルダ保存(検疫つき日次ログ)とは別トグル・別ファイル。
     ; ONにするとアプリの履歴タブ自体が再起動を跨いで遡れるようになる。検疫は両トグルで共通・完全維持。
-    SettingsGui.Add("GroupBox", "x10 y232 w380 h74", "履歴（既定はOFF）")
+    SettingsGui.Add("GroupBox", "x10 y232 w380 h74", "履歴（既定はON）")
     SettingsChkHistPersist := SettingsGui.Add("CheckBox", "x20 y254 w360", "履歴を再起動後も残す（Clibor方式・検疫付き）")
     SettingsChkHistPersist.Value := ClipHistoryPersist
     SettingsChkHistPersist.OnEvent("Click", (*) => ApplyHistPersistToggle(SettingsChkHistPersist))
@@ -2663,7 +2703,7 @@ A_TrayMenu.Add("クリップボード履歴を全削除", DeleteHistoryAll)
 A_TrayMenu.Add("定型文の管理...", ShowSnippetManager)
 A_TrayMenu.Add("定型文ファイルを編集 (snippets.ini)", EditSnippetsFile)   ; 上級者向け(生のiniを直接編集)。通常は上のGUIで足りる
 A_TrayMenu.Add()  ; セパレータ
-; 非永続の原則の例外(既定OFF・オプトイン)。経緯は_docs/CLIPBOARD-HISTORY-FOLDER-ARCHIVE-DESIGN.md参照
+; 非永続の原則の例外(v1.18.0〜既定ON)。経緯は_docs/CLIPBOARD-HISTORY-FOLDER-ARCHIVE-DESIGN.md参照
 ; トレイ項目名だけでは何が起きるか分からないという声を受け、専用の設定ウィンドウに集約。
 A_TrayMenu.Add("設定...", ShowSettingsWindow)
 A_TrayMenu.Add()  ; セパレータ
@@ -2680,20 +2720,4 @@ if !IsStartupRegistered() && !SettingsMap.Has("state.firstrunprompted") {
         "送信サジェスト", "YesNo Icon?")
     if (result = "Yes")
         EnableStartup()
-}
-MaybePromptHistoryPersist()
-
-; 履歴の永続化について、アップデート後の初回起動時に1回だけ案内する。既定は変えない
-; (Noを選んでも無視してもOFFのまま=非永続原則は無傷)。どちらを選んでもフラグを立て、二度と出さない。
-MaybePromptHistoryPersist() {
-    global SettingsMap
-    if SettingsMap.Has("state.histpersistprompted")
-        return
-    SetSetting("state.histpersistprompted", "1")
-    result := MsgBox("履歴を再起動後も残せるようになりました。`n"
-        . "Cliborのように過去の履歴をずっと遡れます(パスワード自動クリア連動の検疫付き・"
-        . "ファイルはclip-archiveフォルダ内)。`n`n有効にしますか？(あとから設定でいつでも変更できます)",
-        "送信サジェスト", "YesNo Icon?")
-    if (result = "Yes")
-        SetSetting("history.persist", "on")
 }
