@@ -23,11 +23,14 @@ if A_IsCompiled
 ;  対応アプリ・送信ルールは sites.ini、定型文は snippets.ini で編集できます（同梱）。
 ;  トレイのアイコンを右クリック -> Suspend Hotkeys / Exit
 
-global AppVersion := "1.15.4"
+global AppVersion := "1.16.0"
 global CopyOnSelect := true, dragX := 0, dragY := 0, dragT := 0
 global SitesConfig := Map()
 global SiteRules := []
-global ClipHistory := [], ClipHistoryMax := 30   ; {text,time}の配列・メモリのみ
+; Cliborと同様に「ずっと遡れる」体験にするため上限は実質無制限(v1.16.0〜。旧既定30)。
+; 破棄ロジック(PushClipHistory/PushClipImageのwhile ClipHistory.Length > ClipHistoryMax)は
+; そのまま残し、事実上発火しない大きさにしているだけ(sites.ini [clipboard] max= で今も上書き可能)。
+global ClipHistory := [], ClipHistoryMax := 999999   ; {text,time}の配列・メモリのみ
 ; 既定は非永続。archiveimage/archivetextトグルによる明示オプトイン例外あり(検疫付き・既定OFF)。
 ; 経緯は_docs/CLIPBOARD-HISTORY-FOLDER-ARCHIVE-DESIGN.md参照
 global LongPressSec := 0.35     ; sites.ini [general] longpress= で上書き可
@@ -693,6 +696,7 @@ ShowLauncherSettingsMenu(*) {
 ; 行単位書き換えで行う（全文書き直しはコメント行消失・重複ラベル誤爆のリスクがあり不採用）。
 global SnipMgrGui := 0, SnipMgrLV := 0, SnipMgrLabelEd := 0, SnipMgrBodyEd := 0
 global SnipMgrStatus := 0, SnipMgrItems := [], SnipMgrClearChk := 0
+global SnipMgrDragBar := 0                    ; -Caption化に伴う自前ドラッグバー(ランチャーと統一、v1.16.0〜)
 global SnipMgrTab := 0, SnipMgrHistLV := 0, SnipMgrHistEd := 0, SnipMgrHistPrev := 0
 global SnipMgrHistCount := 0, SnipMgrHistRows := []
 
@@ -714,82 +718,114 @@ SnipMgrPositionArgs(w, h) {
 
 ShowSnippetManager(*) {
     global SnipMgrGui, SnipMgrLV, SnipMgrLabelEd, SnipMgrBodyEd, SnipMgrStatus, SnipMgrClearChk
-    global SnipMgrTab, SnipMgrHistLV, SnipMgrHistEd, SnipMgrHistPrev, SnipMgrHistCount, LauncherGui
+    global SnipMgrTab, SnipMgrHistLV, SnipMgrHistEd, SnipMgrHistPrev, SnipMgrHistCount, LauncherGui, SnipMgrDragBar
     ; ランチャーのフォーカス監視を止める(設定ウィンドウと同じ地雷: フォーカスが移った瞬間に誤クローズする)
     SetTimer(CheckLauncherFocus, 0)
     if SnipMgrGui {
         SnipMgrRefresh()               ; 外部編集(メモ帳/取込)を拾うため再表示時は必ず再読込
         SnipMgrHistRefresh()
-        SnipMgrGui.Show(SnipMgrPositionArgs(600, 572))
+        SnipMgrGui.Show(SnipMgrPositionArgs(600, 590))
+        SetTimer(SnipMgrWatchDrag, 30)
         return
     }
-    SnipMgrGui := Gui("+ToolWindow", "定型文の管理")
+    ; ランチャーと同じ「-Caption + 独自ドラッグバー」に統一(v1.16.0〜)。OS標準タイトルバーの
+    ; 代わりに色付きバーでタイトルを出し、ドラッグ移動はSnipMgrWatchDragで自前実装する
+    ; (LauncherWatchDragと同じ「Destroy後アクセス防止」パターンを踏襲。実クラッシュ既知の地雷)。
+    SnipMgrGui := Gui("-Caption +ToolWindow")
     SnipMgrGui.SetFont("s9", "Meiryo UI")
-    SnipMgrTab := SnipMgrGui.Add("Tab3", "x0 y0 w600 h496 -Wrap", ["定型文", "履歴"])
+    SnipMgrDragBar := SnipMgrGui.Add("Text", "x0 y0 w600 h18 BackgroundD4DCE8 c1A3E7A +0x100", "  定型文の管理")
+    SnipMgrDragBar.SetFont("s9")
+    SnipMgrTab := SnipMgrGui.Add("Tab3", "x0 y18 w600 h496 -Wrap", ["定型文", "履歴"])
     SnipMgrTab.OnEvent("Change", SnipMgrTabChanged)
 
     SnipMgrTab.UseTab(1)
     ; NoSort NoSortHdr が必須: ソートを許すと行番号↔SnipMgrItemsの対応が壊れ、
     ; 別の定型文を上書き・削除する事故につながる（この設定を外さないこと）
-    SnipMgrLV := SnipMgrGui.Add("ListView", "x10 y36 w580 h250 -Multi NoSort NoSortHdr +Grid",
+    SnipMgrLV := SnipMgrGui.Add("ListView", "x10 y54 w580 h250 -Multi NoSort NoSortHdr +Grid",
         ["ラベル", "本文"])
     SnipMgrLV.ModifyCol(1, 150), SnipMgrLV.ModifyCol(2, 400)
     SnipMgrLV.OnEvent("ItemSelect", SnipMgrOnSelect)
 
-    SnipMgrGui.Add("Text", "x10 y300 w50 h20", "ラベル")
-    SnipMgrLabelEd := SnipMgrGui.Add("Edit", "x64 y296 w300 h24")
-    SnipMgrGui.Add("Text", "x10 y330 w50 h20", "本文")
+    SnipMgrGui.Add("Text", "x10 y318 w50 h20", "ラベル")
+    SnipMgrLabelEd := SnipMgrGui.Add("Edit", "x64 y314 w300 h24")
+    SnipMgrGui.Add("Text", "x10 y348 w50 h20", "本文")
     ; +WantReturn: 既定ボタンにEnterを食われず本文中に改行を打てるようにする
-    SnipMgrBodyEd := SnipMgrGui.Add("Edit", "x64 y326 w526 h96 +Multi +WantReturn +VScroll")
+    SnipMgrBodyEd := SnipMgrGui.Add("Edit", "x64 y344 w526 h96 +Multi +WantReturn +VScroll")
 
-    SnipMgrGui.Add("Button", "x64 y432 w100 h28", "新規追加").OnEvent("Click", SnipMgrAdd)
-    SnipMgrGui.Add("Button", "x172 y432 w100 h28", "上書き保存").OnEvent("Click", SnipMgrSave)
-    SnipMgrGui.Add("Button", "x280 y432 w80 h28", "削除").OnEvent("Click", SnipMgrDelete)
-    SnipMgrGui.Add("Button", "x430 y432 w76 h28", "CSV出力").OnEvent("Click", (*) => ExportSnippetsCsv(true))
-    SnipMgrGui.Add("Button", "x510 y432 w80 h28", "CSV取込").OnEvent("Click", SnipMgrImport)
-    SnipMgrClearChk := SnipMgrGui.Add("CheckBox", "x430 y464 w160 h20", "全クリアして取込")
+    SnipMgrGui.Add("Button", "x64 y450 w100 h28", "新規追加").OnEvent("Click", SnipMgrAdd)
+    SnipMgrGui.Add("Button", "x172 y450 w100 h28", "上書き保存").OnEvent("Click", SnipMgrSave)
+    SnipMgrGui.Add("Button", "x280 y450 w80 h28", "削除").OnEvent("Click", SnipMgrDelete)
+    SnipMgrGui.Add("Button", "x430 y450 w76 h28", "CSV出力").OnEvent("Click", (*) => ExportSnippetsCsv(true))
+    SnipMgrGui.Add("Button", "x510 y450 w80 h28", "CSV取込").OnEvent("Click", SnipMgrImport)
+    SnipMgrClearChk := SnipMgrGui.Add("CheckBox", "x430 y482 w160 h20", "全クリアして取込")
 
     ; --- 履歴タブ: 非永続のClipHistoryを検索・参照するだけのビュー(ペースト機能は持たせない) ---
     SnipMgrTab.UseTab(2)
-    SnipMgrGui.Add("Text", "x10 y40 w40 h20", "検索")
-    SnipMgrHistEd := SnipMgrGui.Add("Edit", "x54 y36 w280 h24")
+    SnipMgrGui.Add("Text", "x10 y58 w40 h20", "検索")
+    SnipMgrHistEd := SnipMgrGui.Add("Edit", "x54 y54 w280 h24")
     SnipMgrHistEd.OnEvent("Change", (*) => SnipMgrHistRefresh())
-    SnipMgrHistCount := SnipMgrGui.Add("Text", "x344 y40 w246 h20 cGray", "")
+    SnipMgrHistCount := SnipMgrGui.Add("Text", "x344 y58 w246 h20 cGray", "")
     ; 履歴LVにもNoSort NoSortHdrを付ける: ソートされると行↔SnipMgrHistRows対応が崩れ、
     ; 選んだのと違う行がコピーされる事故になる（定型文タブと同じ理由）
     ; +0x40=LVS_SHAREIMAGELISTS: ランチャーとImageListを共有するため、このLVが破棄されても
     ; 共有ImageList(HistThumbIL)が道連れ破壊されないようにする(付け忘れると相互に壊れる)。
-    SnipMgrHistLV := SnipMgrGui.Add("ListView", "x10 y66 w580 h240 -Multi NoSort NoSortHdr +Grid +0x40",
+    SnipMgrHistLV := SnipMgrGui.Add("ListView", "x10 y84 w580 h240 -Multi NoSort NoSortHdr +Grid +0x40",
         ["コピー日時", "本文"])
     SnipMgrHistLV.ModifyCol(1, 150), SnipMgrHistLV.ModifyCol(2, 400)
     EnsureHistThumbIL()                       ; 画像履歴の実サムネイル表示用ImageList
     SnipMgrHistLV.SetImageList(HistThumbIL, 1)
     SnipMgrHistLV.OnEvent("ItemSelect", SnipMgrHistOnSelect)
     SnipMgrHistLV.OnEvent("DoubleClick", (lv, row) => SnipMgrHistCopy())
-    SnipMgrGui.Add("Text", "x10 y316 w50 h20", "全文")
-    SnipMgrHistPrev := SnipMgrGui.Add("Edit", "x64 y312 w526 h108 +ReadOnly +Multi +VScroll")
-    SnipMgrGui.Add("Button", "x64 y428 w170 h28", "クリップボードへコピー").OnEvent("Click", SnipMgrHistCopy)
-    SnipMgrGui.Add("Text", "x244 y434 w340 h20 cGray",
+    SnipMgrGui.Add("Text", "x10 y334 w50 h20", "全文")
+    SnipMgrHistPrev := SnipMgrGui.Add("Edit", "x64 y330 w526 h108 +ReadOnly +Multi +VScroll")
+    SnipMgrGui.Add("Button", "x64 y446 w170 h28", "クリップボードへコピー").OnEvent("Click", SnipMgrHistCopy)
+    SnipMgrGui.Add("Text", "x244 y452 w340 h20 cGray",
         "履歴は最大" . ClipHistoryMax . "件・このPC内のみ・保存されません")
 
     SnipMgrTab.UseTab()   ; 必須: 以降のステータス行を両タブ共通にする
-    ; ブランドロゴ: タブより後に追加してz-orderを前面にし、タブ行の右端に重ねて表示。
+    SnipMgrStatus := SnipMgrGui.Add("Text", "x10 y518 w400 h20 cGray", "")
+    ; ブランドロゴ: ランチャーと同じ73x55を下部中央1箇所に統一(v1.16.0〜。以前は右上マーク+右下ロゴの2箇所に分散していた)。
     ; 読み込み失敗(ファイル欠落等)は機能に影響しないよう握りつぶす
-    try SnipMgrGui.Add("Picture", "x566 y2 w22 h22", A_ScriptDir . "\kimitolink-mark.png")
-    SnipMgrStatus := SnipMgrGui.Add("Text", "x10 y500 w400 h20 cGray", "")
-    ; フッター: フルロゴを右下に控えめに配置。読み込み失敗は握りつぶす(G-3と同じ流儀)
-    try SnipMgrGui.Add("Picture", "x522 y528 w58 h36", A_ScriptDir . "\kimitolink-full-logo.png")
+    try SnipMgrGui.Add("Picture", "x264 y546 w73 h-1", A_ScriptDir . "\kimitolink-full-logo-73.png")
 
     SnipMgrGui.OnEvent("Close", (*) => HideSnipMgr())
     SnipMgrGui.OnEvent("Escape", (*) => HideSnipMgr())
     SnipMgrRefresh()
     SnipMgrHistRefresh()
-    SnipMgrGui.Show(SnipMgrPositionArgs(600, 572))
+    SnipMgrGui.Show(SnipMgrPositionArgs(600, 590))
+    SetTimer(SnipMgrWatchDrag, 30)
+}
+
+; -Caption化に伴うドラッグバー移動監視。LauncherWatchDragと同じ実装パターン
+; (Destroy後アクセス防止のtry/catch含む。既知の地雷 feedback_ahk_drag_race_condition と同型)。
+SnipMgrWatchDrag() {
+    global SnipMgrGui, SnipMgrDragBar
+    if !(IsObject(SnipMgrGui) && IsObject(SnipMgrDragBar) && GetKeyState("LButton", "P")) {
+        if !IsObject(SnipMgrGui)
+            SetTimer(SnipMgrWatchDrag, 0)   ; ウィンドウ自体が無くなったらタイマーも止める
+        return
+    }
+    MouseGetPos &mx, &my
+    SnipMgrDragBar.GetPos(&bx, &by, &bw, &bh)
+    SnipMgrGui.GetPos(&gx, &gy)
+    if !(mx >= gx + bx && mx <= gx + bx + bw && my >= gy + by && my <= gy + by + bh)
+        return
+    winX := gx, winY := gy, startMx := mx, startMy := my
+    while GetKeyState("LButton", "P") {
+        if !IsObject(SnipMgrGui)
+            return
+        MouseGetPos &mx2, &my2
+        try SnipMgrGui.Move(winX + (mx2 - startMx), winY + (my2 - startMy))
+        catch
+            return
+        Sleep 15
+    }
 }
 
 ; 定型文の管理ウィンドウを閉じ、止めていたランチャーのフォーカス監視を再開する(HideSettingsWindowと同じ流儀)。
 HideSnipMgr() {
     global SnipMgrGui, LauncherGui
+    SetTimer(SnipMgrWatchDrag, 0)
     SnipMgrGui.Hide()
     if IsObject(LauncherGui)
         SetTimer(CheckLauncherFocus, 150)
