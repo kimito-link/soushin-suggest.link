@@ -23,7 +23,7 @@ if A_IsCompiled
 ;  対応アプリ・送信ルールは sites.ini、定型文は snippets.ini で編集できます（同梱）。
 ;  トレイのアイコンを右クリック -> Suspend Hotkeys / Exit
 
-global AppVersion := "1.15.2"
+global AppVersion := "1.15.3"
 global CopyOnSelect := true, dragX := 0, dragY := 0, dragT := 0
 global SitesConfig := Map()
 global SiteRules := []
@@ -1076,7 +1076,7 @@ ShowLauncher() {
     ; 画像は73x55(4:3)。wのみ指定してhは-1でアスペクト比を保たせ、横伸びを防ぐ。
     ; 読み込み失敗時は握りつぶし、ロゴが出ないだけでランチャーは通常通り使える。
     LauncherTab.GetPos(&tabX, &tabY, &tabW, &tabH)
-    footerY := tabY + tabH + 6
+    footerY := tabY + tabH                        ; リスト直下に隙間なく詰める(ユーザーフィードバックで6px余白を撤去)
     logoW := 73, logoH := 55
     try LauncherGui.Add("Picture", "x" . (tabX + (tabW - logoW) // 2) . " y" . footerY . " w" . logoW . " h-1",
         A_ScriptDir . "\kimitolink-full-logo-73.png")
