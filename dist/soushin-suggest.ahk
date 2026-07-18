@@ -23,7 +23,7 @@ if A_IsCompiled
 ;  対応アプリ・送信ルールは sites.ini、定型文は snippets.ini で編集できます（同梱）。
 ;  トレイのアイコンを右クリック -> Suspend Hotkeys / Exit
 
-global AppVersion := "1.22.0"
+global AppVersion := "1.22.1"
 global CopyOnSelect := true, dragX := 0, dragY := 0, dragT := 0
 global SitesConfig := Map()
 global SiteRules := []
@@ -128,10 +128,13 @@ DiagConsented() {
 
 ; トレイメニュー「診断ページで見る」。初回(未同意)は確認ダイアログを出し、同意後のみ送信する。
 ; 起動時に自動でダイアログを出すことはしない(確認疲れによる反射的同意を避ける、設計書C-4)。
+; 同意すると以後は起動のたびに自動でバックグラウンド送信が始まる(StartDiagAutoSendIfConsented)。
 ShowDiagnosticPage(*) {
-    if !DiagConsented() {
+    firstTime := !DiagConsented()
+    if firstTime {
         msg := "診断カウンター(動作回数と設定値のみ。クリップボードの中身・履歴・個人情報は含みません)を`n"
             . "soushin-suggest.link に送信し、ブラウザで表示します。`n"
+            . "同意すると、以後はアプリ起動中5分おきに自動で送信されます(いつでも設定でOFFにできます)。`n"
             . "サーバー上のデータは6時間で自動削除されます。送信してよいですか？"
         if (MsgBox(msg, "診断ページで見る", "YesNo Icon!") != "Yes")
             return
@@ -139,6 +142,8 @@ ShowDiagnosticPage(*) {
     }
     if !DiagPushAndOpen()
         Flash("診断情報の送信に失敗しました。ネットワーク接続を確認してください", 2000)
+    if firstTime
+        StartDiagAutoSendIfConsented()
 }
 
 ; 送信に成功したらブラウザで開く。失敗時はfalseを返すだけで、呼び出し元が通知する(fail-closed、
@@ -175,6 +180,41 @@ DiagPush(token) {
     } catch {
         DiagBump("diagPushFail")
         return false
+    }
+}
+
+; --- 常時自動送信(2026-07-18・ユーザー要望「ドメインを開くだけで見えるように」) ---
+; MVP第1歩の「送信は毎回ユーザー操作起点」から踏み込み、同意後は5分おきにバックグラウンド
+; 送信する。連続失敗2回で自動停止する(設計書G-3のリトライ無し方針を維持。無限に再試行しない)。
+global DiagAutoSendFailCount := 0
+
+; アプリ起動時に1回だけ呼ぶ。初回(未同意)のみ確認ダイアログを出し、以後は無言で自動送信する
+; (毎回確認するとダイアログ疲れで反射的同意を招くため、確認は初回だけ・設計書C-4の思想を踏襲)。
+StartDiagAutoSendIfConsented() {
+    if !DiagConsented()
+        return
+    token := EnsureDiagToken()
+    if (token = "")
+        return
+    SetTimer(DiagAutoSendTick, -1)          ; 起動直後に1回即送信
+    SetTimer(DiagAutoSendTick, 300000)      ; 以後5分間隔
+}
+
+DiagAutoSendTick() {
+    global DiagAutoSendFailCount
+    token := EnsureDiagToken()
+    if (token = "") {
+        SetTimer(DiagAutoSendTick, 0)
+        return
+    }
+    if DiagPush(token) {
+        DiagAutoSendFailCount := 0
+    } else {
+        DiagAutoSendFailCount++
+        if (DiagAutoSendFailCount >= 2) {
+            SetTimer(DiagAutoSendTick, 0)   ; 連続失敗で自動停止(リトライループを作らない)
+            TrayTip("送信サジェスト", "診断の自動送信を一時停止しました(通信エラー)", "Mute")
+        }
     }
 }
 
@@ -2935,6 +2975,7 @@ if FileExist(A_ScriptDir . "\settings.ini")
 else
     MigrateSettingsIfNeeded()   ; sites.ini/startup-prompted.flagから現在有効値を吸い上げsettings.iniを初回生成
 SetTimer(StartHistoryStoreLoad, -50)   ; 起動シーケンス本体を待ってから履歴ストアを読み込む
+SetTimer(StartDiagAutoSendIfConsented, -1000)   ; 同意済みなら起動のたびに自動送信を再開(未同意なら何もしない)
 OnClipboardChange(ClipChanged)
 ; 検疫中の未確定項目は書かずに終了する(fail-closed)。PendingArchiveは単なるメモリ配列なので
 ; プロセス終了で自然に消えるが、意図を明示するためOnExitで明示クリアする。

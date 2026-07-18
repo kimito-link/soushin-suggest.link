@@ -4,6 +4,11 @@
 // Deliberately minimal: no logging beyond the platform's own access log, no aggregation,
 // no cross-token linkage. The KV entry expires on its own (expirationTtl) — there is no
 // delete code path to forget to run.
+//
+// 2026-07-18: also writes to a fixed "diag:latest" key so /shindan/ can be opened with no
+// token and still show the most recent snapshot. This is an explicit, user-requested
+// tradeoff: anyone who knows the URL can see it. Fine for a single-user desktop app; would
+// need to be reconsidered if this ever serves more than one person's data.
 
 interface Env {
   DIAG_KV: KVNamespace;
@@ -49,11 +54,11 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     return new Response(null, { status: 400 });
   }
 
-  await env.DIAG_KV.put(
-    `diag:${token}`,
-    JSON.stringify({ receivedAt: Date.now(), diag }),
-    { expirationTtl: TTL_SECONDS },
-  );
+  const payload = JSON.stringify({ receivedAt: Date.now(), diag });
+  await Promise.all([
+    env.DIAG_KV.put(`diag:${token}`, payload, { expirationTtl: TTL_SECONDS }),
+    env.DIAG_KV.put("diag:latest", payload, { expirationTtl: TTL_SECONDS }),
+  ]);
 
   return new Response(null, { status: 204 });
 };

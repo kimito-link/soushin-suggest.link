@@ -33,6 +33,23 @@
     margin-bottom: 12px;
   }
   .card.intro { background: #eef6ff; border-color: #bcdcff; font-size: 14px; }
+  #pwGate { margin-bottom: 12px; }
+  #pwInput {
+    padding: 8px 10px;
+    font-size: 14px;
+    border: 1px solid #99a;
+    border-radius: 6px;
+    margin-right: 8px;
+  }
+  #btnPw {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 6px;
+    background: #4a6fd1;
+    color: #fff;
+    cursor: pointer;
+    font-size: 14px;
+  }
   #input { margin-bottom: 12px; }
   #paste {
     width: 100%;
@@ -123,6 +140,13 @@
     <p id="introManual">🔒 貼り付けた内容は<b>このブラウザの中だけ</b>で処理されます（自動送信を使わない場合）。</p>
     <p><b>使い方</b>: トレイメニューの「診断ページで見る」を選ぶと、確認のうえこのページが自動で最新状態を表示します。
        送信したくない場合は従来どおり ① 「診断情報をコピー」を押す ② 下の枠に Ctrl+V ③ 結果を見る、でも使えます。</p>
+  </section>
+
+  <section id="pwGate" class="card" hidden>
+    <p>🔑 最新の状態を見るにはパスワードが必要です（トークン付きリンクを開いた場合は不要です）。</p>
+    <input id="pwInput" type="password" placeholder="パスワード" autocomplete="off">
+    <button id="btnPw">表示する</button>
+    <p id="pwError" class="verdict-note" hidden>パスワードが違います。</p>
   </section>
 
   <section id="input">
@@ -439,8 +463,11 @@
   // 自動送信対応(2026-07-18・_docs/SHINDAN-AUTO-SEND-DESIGN.md)。
   // URLフラグメント(#t=)にトークンがあれば、貼り付けの代わりにfetchで最新状態を取得する。
   // フラグメントはHTTPリクエストに含まれないため、サーバー側のアクセスログにも残らない。
+  // トークンが無い場合は「最新の1件」をパスワード付きで取得する(ドメインを開くだけで
+  // 見えるようにしたいというユーザー要望と、URLだけでは誰でも見られてしまう懸念の折衷)。
   var TOKEN_RE = /^[0-9a-f]{32}$/;
   var pollTimer = null;
+  var diagPassword = null; // メモリのみ保持。保存しない(毎回入力する設計)。
 
   function tokenFromHash() {
     var m = /(?:^|[?&#])t=([0-9a-f]{32})/.exec(location.hash);
@@ -448,8 +475,18 @@
   }
 
   function fetchLatest(token) {
-    fetch('/api/diag/latest?t=' + token, { cache: 'no-store' })
+    var qs = token ? ('?t=' + token) : '';
+    var headers = {};
+    if (!token && diagPassword) headers['X-Diag-Password'] = diagPassword;
+    fetch('/api/diag/latest' + qs, { cache: 'no-store', headers: headers })
       .then(function (res) {
+        if (res.status === 401) {
+          document.getElementById('pwGate').hidden = false;
+          document.getElementById('pwError').hidden = diagPassword === null;
+          diagPassword = null;
+          if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+          return null;
+        }
         if (res.status === 404) {
           $verdict.className = 'verdict gray';
           $verdict.textContent = 'アプリからまだ届いていません（トレイの「診断ページで見る」を実行してください）。';
@@ -459,6 +496,7 @@
           return null;
         }
         if (!res.ok) throw new Error('http ' + res.status);
+        document.getElementById('pwGate').hidden = true;
         return res.json();
       })
       .then(function (body) {
@@ -471,25 +509,36 @@
       });
   }
 
-  var diagToken = tokenFromHash();
-  if (diagToken) {
-    document.getElementById('introAuto').hidden = false;
-    document.getElementById('introManual').hidden = true;
-    fetchLatest(diagToken);
-    // 表示中だけ30秒間隔でポーリングし、非表示になったら止める(不要な通信をしない)。
-    document.addEventListener('visibilitychange', function () {
-      if (document.visibilityState === 'visible') {
-        fetchLatest(diagToken);
-        if (!pollTimer) pollTimer = setInterval(function () { fetchLatest(diagToken); }, 30000);
-      } else if (pollTimer) {
-        clearInterval(pollTimer);
-        pollTimer = null;
-      }
-    });
-    if (document.visibilityState === 'visible') {
-      pollTimer = setInterval(function () { fetchLatest(diagToken); }, 30000);
-    }
+  function startAutoFetch(token) {
+    fetchLatest(token);
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(function () { fetchLatest(token); }, 30000);
   }
+
+  // 2026-07-18: URLフラグメント(#t=)にトークンがあればそれを、無ければパスワード確認後に
+  // 「最新の1件」を常に自動取得する(ユーザー明示要望: ドメインを開くだけで見えるようにしたい)。
+  var diagToken = tokenFromHash();
+  document.getElementById('introAuto').hidden = false;
+  document.getElementById('introManual').hidden = true;
+
+  document.getElementById('btnPw').addEventListener('click', function () {
+    diagPassword = document.getElementById('pwInput').value;
+    startAutoFetch(diagToken);
+  });
+  document.getElementById('pwInput').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') document.getElementById('btnPw').click();
+  });
+
+  startAutoFetch(diagToken);
+  // 表示中だけポーリングし、非表示になったら止める(不要な通信をしない)。
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') {
+      startAutoFetch(diagToken);
+    } else if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+  });
 
   $btnShare.addEventListener('click', function () {
     if (!lastSnapshot) return;
