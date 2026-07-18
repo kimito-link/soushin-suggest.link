@@ -23,7 +23,7 @@ if A_IsCompiled
 ;  対応アプリ・送信ルールは sites.ini、定型文は snippets.ini で編集できます（同梱）。
 ;  トレイのアイコンを右クリック -> Suspend Hotkeys / Exit
 
-global AppVersion := "1.22.3"
+global AppVersion := "1.22.7"
 global CopyOnSelect := true, dragX := 0, dragY := 0, dragT := 0
 global SitesConfig := Map()
 global SiteRules := []
@@ -98,6 +98,12 @@ CopyDiagnostics(*) {
 ; サーバー保持は6時間TTLで自動削除、送信は毎回ユーザー操作起点(MVPでは自動送信タイマーを持たない)。
 global DiagToken := ""
 global DiagEndpoint := "https://soushin-suggest.link/api/diag/report"
+
+; 描画実測プローブのキャッシュ(_docs/SHINDAN-PAINT-PROBE-DESIGN.md)。「データはあるのに画面に
+; 描かれていない」白化バグを座標/件数だけでは検知できないため、ListView表示面をGetPixelで
+; 実測した結果をキャッシュする。ピクセル値そのものは送らず、点数と判定語のみ送信する。
+global DiagPaintBody := ""
+global DiagPaintTick := 0
 
 ; プロセス起動ごとに再生成する使い捨てトークン。ファイル/レジストリに書かない
 ; (書けば擬似デバイスIDになるため禁止。設計書C-1)。BCryptGenRandomでCSPRNGから生成する
@@ -285,7 +291,73 @@ BuildDiagText() {
         s .= (first ? "" : ",") . '"' . key . '":{"n":' . v.n . ',"agoMs":' . (now - v.last) . "}"
         first := false
     }
-    return s . "}}"
+    s .= "}"                                  ; countersを閉じる
+    if (DiagPaintBody != "")
+        s .= ',"paint":{"agoMs":' . (now - DiagPaintTick) . ',' . DiagPaintBody . '}'
+    return s . "}"
+}
+
+; 描画実測プローブ。読み取り専用(GetDC/GetPixel/ReleaseDC/GetCount/LVM_GETITEMRECT)のみで、
+; 【不変条件】SETREDRAW/InvalidateRect/RedrawWindow/Move等、描画状態を書き換えるAPIは絶対に呼ばない。
+; よって白化バグのクラス(描画状態の破損)をプローブ自身が起こすことは構造的にない。
+; 詳細: _docs/SHINDAN-PAINT-PROBE-DESIGN.md
+DiagSchedulePaintProbe() {
+    SetTimer(DiagProbeLauncherPaint, -150)   ; WM_PAINT処理後に読む。多重呼びは一発タイマーが自然に合流
+}
+
+DiagProbeLauncherPaint() {
+    global LauncherGui, LauncherTab, LauncherLvH, LauncherLvS, DiagPaintBody, DiagPaintTick
+    ; IsObject()はGui破棄後もtrueを返し続ける(オブジェクト自体は生存するため)。プロパティ/メソッド
+    ; アクセス時に初めて"The control is destroyed"エラーになる。一発タイマー(-150ms)がランチャー
+    ; を閉じた直後に発火し、ここで未捕捉例外落ちする致命的クラッシュが実機で確認された。
+    ; 計測全体を1つのtryで包み、破棄後の例外は「もう対象が無い」の合図として静かに抜ける。
+    try {
+        if !(IsObject(LauncherGui) && IsObject(LauncherTab))
+            return
+        tabValue := LauncherTab.Value
+        lv := (tabValue = 1) ? LauncherLvH : LauncherLvS
+        rows := lv.GetCount()
+        ink := 0, other := 0, bg := 0
+        if (rows > 0) {
+            hdc := DllCall("GetDC", "Ptr", lv.Hwnd, "Ptr")
+            rect := Buffer(16, 0)
+            Loop Min(rows, 3) {                       ; 先頭3行×8点=最大24点
+                NumPut("Int", 2, rect, 0)             ; LVIR_LABEL
+                if !SendMessage(0x100E, A_Index - 1, rect.Ptr, lv)   ; LVM_GETITEMRECT
+                    continue
+                l := NumGet(rect, 0, "Int"), t := NumGet(rect, 4, "Int")
+                r := NumGet(rect, 8, "Int"), b := NumGet(rect, 12, "Int")
+                y := (t + b) // 2
+                Loop 8 {
+                    x := l + 6 + (r - l - 12) * (A_Index - 1) // 7
+                    px := DllCall("GetPixel", "Ptr", hdc, "Int", x, "Int", y, "UInt")
+                    if (px = 0xFFFFFFFF)
+                        continue
+                    rr := px & 0xFF, gg := (px >> 8) & 0xFF, bb := (px >> 16) & 0xFF
+                    lum := (rr * 3 + gg * 6 + bb) // 10
+                    if (lum < 0x60)
+                        ink++                          ; 文字(濃色)が実際に描かれている
+                    else if (Abs(rr-0xF0) <= 8 && Abs(gg-0xF6) <= 8 && Abs(bb-0xFF) <= 8)
+                        bg++                           ; 背景F0F6FFそのまま
+                    else
+                        other++                        ; 罫線・選択ハイライト等
+                }
+            }
+            DllCall("ReleaseDC", "Ptr", lv.Hwnd, "Ptr", hdc)
+        }
+    } catch {
+        return   ; 計測中にウィンドウ/コントロールが破棄された。結果は破棄し前回のキャッシュを維持する
+    }
+    state := (rows = 0) ? "na" : (ink > 0) ? "full" : (other > 0) ? "gridOnly" : "blank"
+    DiagPaintBody := '"tab":' . tabValue . ',"rows":' . rows
+        . ',"ink":' . ink . ',"other":' . other . ',"bg":' . bg . ',"state":"' . state . '"'
+    DiagPaintTick := A_TickCount
+    if (state = "blank")
+        DiagBump("uiBlank")
+    else if (state = "gridOnly")
+        DiagBump("uiGridOnly")
+    if (state != "full" && rows > 0 && !A_IsCompiled)
+        ToolTip("⚠描画異常検知 state=" . state . " rows=" . rows), SetTimer(() => ToolTip(), -2500)
 }
 
 ; --- load sites.ini (per-app rules + [sites] title-keyword rules) ---
@@ -1477,7 +1549,7 @@ ShowLauncher() {
     ; リスト幅は460(ウィンドウ幅)いっぱいに広げる(2026-07-18、外枠の余白が邪魔とのユーザー指摘)。
     ; Tab3内のコンテンツ領域はx0起点でウィンドウ幅と一致するため、そのままw460で埋まる。
     LauncherLvH := LauncherGui.Add("ListView"
-        , "w460 r" . rows . " -Hdr -Multi NoSort +0x40 BackgroundF0F6FF", ["履歴"])
+        , "w460 r" . rows . " -Hdr -Multi NoSort +Grid +0x40 BackgroundF0F6FF", ["履歴"])
     LauncherLvH.Opt("+LV0x10000")             ; LVS_EX_DOUBLEBUFFER: 再描画のチラつき防止
     EnsureHistThumbIL()
     LauncherLvH.SetImageList(HistThumbIL, 1)  ; 1=Small(レポート表示で使われる側)
@@ -1491,7 +1563,7 @@ ShowLauncher() {
     ; 実証済み)ため、定型文タブ自体をListView化して解消する。定型文にサムネイルは元々無いため
     ; ImageList/+0x40(LVS_SHAREIMAGELISTS)は付けない。詳細: _docs/LAUNCHER-SNIPPETS-LISTVIEW-DESIGN.md
     LauncherLvS := LauncherGui.Add("ListView"
-        , "w460 r" . rows . " -Hdr -Multi NoSort BackgroundF0F6FF", ["定型文"])
+        , "w460 r" . rows . " -Hdr -Multi NoSort +Grid BackgroundF0F6FF", ["定型文"])
     LauncherLvS.Opt("+LV0x10000")             ; LVS_EX_DOUBLEBUFFER: 白化(Z-order競合の再描画欠落)対策の本丸
     LauncherLvS.ModifyCol(1, 436)             ; 460 - スクロールバー/枠ぶん(履歴タブと同値)
     FillLauncherSnippetsLV(LauncherLvS)
@@ -1540,6 +1612,7 @@ ShowLauncher() {
     }
     WinActivate("ahk_id " . LauncherGui.Hwnd)
     LauncherSearchEdit.Focus()   ; 検索EditはTab3の後に追加され既定フォーカスにならないため明示要求(出現直後に即タイプで絞り込めるように)
+    DiagSchedulePaintProbe()   ; 描画実測プローブ(_docs/SHINDAN-PAINT-PROBE-DESIGN.md)
     SetTimer(CheckLauncherFocus, 150)
     SetTimer(LauncherWatchDrag, 30)
     LauncherHoverLast := "", SetTimer(LauncherWatchHover, 120)
@@ -2933,6 +3006,11 @@ SetTabLabel(tabCtrl, index, text) {
 ; 履歴のように無際限に増えないため(意図的な非対称。_docs/LAUNCHER-SNIPPETS-LISTVIEW-DESIGN.md G-3)。
 FillLauncherSnippetsLV(lv, query := "") {
     global Snippets, LauncherSnipFilterMap
+    ; Critical: -Redraw〜+Redraw区間に0遅延タイマー(RedrawActiveLauncherSnippetsTab等)が
+    ; 割り込み、同一ListViewへWM_SETREDRAWトグルが入れ子で走るとOFFが実効的に残留し
+    ; 「罫線もアイテムも無い完全空白」になる不具合が実測(uiGridOnly)で確認された。
+    ; 関数終了で自動解除される。詳細: _docs/SHINDAN-PAINT-PROBE-DESIGN.md C-4節
+    Critical("On")
     LauncherSnipFilterMap := []
     lv.Opt("-Redraw")
     lv.Delete()
@@ -2944,6 +3022,14 @@ FillLauncherSnippetsLV(lv, query := "") {
         lv.Add(, LauncherRowKeyLabel(dispRow) . (SubStr(s.value, 1, 4) = "run:" ? "▶ " : "") . s.label)
     }
     lv.Opt("+Redraw")
+    ; +Grid(LVS_EX_GRIDLINES)導入後、+Redraw直後は罫線(セル背景)だけ再描画されテキストが
+    ; 反映されない状態が実機で確認された(2026-07-18)。WM_SETREDRAW ONだけでは足りないため
+    ; 明示的に全体再描画を強制する。InvalidateRectでは不十分だったため、Microsoftが文書で
+    ; 指定する完全再描画の形(RedrawWindow+RDW_ALLCHILDREN|RDW_FRAME)に差し替えた。
+    DllCall("RedrawWindow", "Ptr", lv.Hwnd, "Ptr", 0, "Ptr", 0
+        , "UInt", 0x0001 | 0x0004 | 0x0080 | 0x0400)   ; RDW_INVALIDATE|RDW_ERASE|RDW_ALLCHILDREN|RDW_FRAME
+    Critical("Off")
+    DiagSchedulePaintProbe()   ; 描画実測プローブ(_docs/SHINDAN-PAINT-PROBE-DESIGN.md)
 }
 
 ; 表示行番号→行頭ラベル文字列。1〜10は数字キー(0=10番目)、11〜20はShift+数字キー(2026-07-18〜、
@@ -2969,6 +3055,9 @@ LauncherRowKeyLabel(dispRow) {
 FillLauncherHistoryLV(lv, query := "") {
     global ClipHistory, LauncherHistFilterMap
     static DisplayMax := 500
+    ; Critical: FillLauncherSnippetsLVと同じ地雷(-Redraw〜+Redraw区間へのタイマー割り込みで
+    ; WM_SETREDRAW OFFが残留)を先回りで防ぐ。詳細: _docs/SHINDAN-PAINT-PROBE-DESIGN.md C-4節
+    Critical("On")
     lv.Opt("-Redraw")
     lv.Delete()
     LauncherHistFilterMap := []
@@ -2985,6 +3074,10 @@ FillLauncherHistoryLV(lv, query := "") {
         lv.Add((v.type = "image") ? "Icon" . (HistThumbIndex(v) + 1) : "Icon0", txt)
     }
     lv.Opt("+Redraw")
+    DllCall("RedrawWindow", "Ptr", lv.Hwnd, "Ptr", 0, "Ptr", 0
+        , "UInt", 0x0001 | 0x0004 | 0x0080 | 0x0400)   ; RDW_INVALIDATE|RDW_ERASE|RDW_ALLCHILDREN|RDW_FRAME
+    Critical("Off")
+    DiagSchedulePaintProbe()   ; 描画実測プローブ(_docs/SHINDAN-PAINT-PROBE-DESIGN.md)
 }
 
 ; 履歴→定型文昇格。IniWriteは使わず、UTF-8明示のFileAppendで追記する
