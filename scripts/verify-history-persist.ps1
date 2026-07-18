@@ -45,7 +45,7 @@ $code = Get-Content $ahkPath -Raw -Encoding UTF8
 # Helpers: F9 marks user-copy tick; F7 forces an immediate CommitPendingArchive pass;
 # F6 dumps histLen via CopyDiagnostics-style write to a probe file (avoids parsing clipboard).
 $helpers = @'
-^#v::ShowLauncher()
+XButton1::ShowLauncher()
 F9:: {
     global LastUserCopyTick
     LastUserCopyTick := A_TickCount
@@ -60,12 +60,17 @@ F6:: {
 }
 '@
 if ($code -notmatch 'F9::') {
-    $code = $code.Replace('^#v::ShowLauncher()', $helpers)
+    $code = $code.Replace('XButton1::ShowLauncher()', $helpers)
 }
 Set-Content -Path $ahkPath -Value $code -Encoding UTF8
 
 $ahkExe = 'C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe'
-Get-Process | Where-Object { $_.ProcessName -match 'soushin|AutoHotkey' } | Stop-Process -Force -ErrorAction SilentlyContinue
+# Only target leftover probe processes launched from a $env:TEMP staging dir (ss-*-verify-*).
+# Do not touch the real running app started from dist\soushin-suggest.exe.
+Get-Process | Where-Object {
+    ($_.ProcessName -match 'soushin|AutoHotkey') -and
+    ($_.Path -and $_.Path -like (Join-Path $env:TEMP 'ss-*-verify-*'))
+} | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 1
 
 function Get-StoreText {

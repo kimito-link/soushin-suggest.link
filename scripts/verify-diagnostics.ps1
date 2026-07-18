@@ -23,7 +23,7 @@ $code = Get-Content $ahkPath -Raw -Encoding UTF8
 # request/response file so the harness can read it without depending on live clipboard state
 # racing with the driver process's own clipboard writes.
 $helper = @'
-^#v::ShowLauncher()
+XButton1::ShowLauncher()
 F9:: {
     global LastUserCopyTick
     LastUserCopyTick := A_TickCount
@@ -40,12 +40,17 @@ F10:: {
 }
 '@
 if ($code -notmatch 'F9::') {
-    $code = $code.Replace('^#v::ShowLauncher()', $helper)
+    $code = $code.Replace('XButton1::ShowLauncher()', $helper)
 }
 Set-Content -Path $ahkPath -Value $code -Encoding UTF8
 
 $ahkExe = 'C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe'
-Get-Process | Where-Object { $_.ProcessName -match 'soushin|AutoHotkey' } | Stop-Process -Force -ErrorAction SilentlyContinue
+# Only target leftover probe processes launched from a $env:TEMP staging dir (ss-*-verify-*).
+# Do not touch the real running app started from dist\soushin-suggest.exe.
+Get-Process | Where-Object {
+    ($_.ProcessName -match 'soushin|AutoHotkey') -and
+    ($_.Path -and $_.Path -like (Join-Path $env:TEMP 'ss-*-verify-*'))
+} | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 1
 $proc = Start-Process -FilePath $ahkExe -ArgumentList @($ahkPath) -WorkingDirectory $stage -PassThru
 Start-Sleep -Seconds 2
