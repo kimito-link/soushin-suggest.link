@@ -3,9 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<!-- 送信機能の機械的封印: 接続先ゼロ・外部スクリプトゼロをブラウザに強制させる -->
+<!-- 自動送信対応(2026-07-18・_docs/SHINDAN-AUTO-SEND-DESIGN.md)により connect-src を自オリジンのみ許可。
+     外部ドメインへの通信は引き続き禁止(ブラウザが機械的に強制)。 -->
 <meta http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+      content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; form-action 'none'; base-uri 'none'">
 <meta name="robots" content="noindex">
 <title>送信サジェスト 診断ビューア</title>
 <style>
@@ -118,9 +119,10 @@
   </header>
 
   <section id="intro" class="card intro">
-    <p>🔒 このページは貼り付けた内容を<b>どこにも送信しません</b>。すべてこのブラウザの中だけで処理します。</p>
-    <p><b>使い方</b>: ① タスクトレイの送信サジェストのアイコンを右クリック→「診断情報をコピー」を押す
-       ② 下の枠をクリックして Ctrl+V ③ 結果を見る（AIに相談するときは下に出る「AIに相談」ボタンを押して貼るだけ）</p>
+    <p id="introAuto" hidden>📡 トレイメニューの「診断ページで見る」から送信された最新の状態を表示しています。</p>
+    <p id="introManual">🔒 貼り付けた内容は<b>このブラウザの中だけ</b>で処理されます（自動送信を使わない場合）。</p>
+    <p><b>使い方</b>: トレイメニューの「診断ページで見る」を選ぶと、確認のうえこのページが自動で最新状態を表示します。
+       送信したくない場合は従来どおり ① 「診断情報をコピー」を押す ② 下の枠に Ctrl+V ③ 結果を見る、でも使えます。</p>
   </section>
 
   <section id="input">
@@ -143,8 +145,9 @@
   <section id="privacy" class="card">
     <b>🔒 プライバシー</b>
     <ul>
-      <li>貼り付けた内容は<b>このブラウザの中だけ</b>で処理されます。サーバーへの送信は行いません——このページには<b>送信するコード自体が存在しません</b>（通信を全面禁止するCSP設定入り。開発者ツールのNetworkタブで検証できます）。</li>
-      <li>保存もしません。ページを閉じれば消えます（Cookie・localStorage不使用）。</li>
+      <li>このページはあなたが<b>トレイメニューの「診断ページで見る」を実行したときだけ</b>、動作カウンターと設定値（クリップボードの中身・履歴・個人情報は含みません）を soushin-suggest.link のサーバーに送って表示します。</li>
+      <li>データはランダムな一時トークン（あなたの端末を特定する情報ではありません）にのみ紐づき、<b>6時間で自動的に削除</b>されます。</li>
+      <li>送信しない使い方（従来どおりの手動貼り付け）もそのまま使えます。貼り付けた内容はブラウザの中だけで処理され、保存もされません（ページを閉じれば消えます。Cookie・localStorage不使用）。</li>
       <li>そもそも診断JSONにはカウンターと設定値しか入っておらず、コピーした文章・画像・アプリ名は含まれません（アプリ側の仕様）。</li>
     </ul>
   </section>
@@ -432,6 +435,61 @@
     setTimeout(function () { handleText($paste.value); }, 0);
   });
   $btnRender.addEventListener('click', function () { handleText($paste.value); });
+
+  // 自動送信対応(2026-07-18・_docs/SHINDAN-AUTO-SEND-DESIGN.md)。
+  // URLフラグメント(#t=)にトークンがあれば、貼り付けの代わりにfetchで最新状態を取得する。
+  // フラグメントはHTTPリクエストに含まれないため、サーバー側のアクセスログにも残らない。
+  var TOKEN_RE = /^[0-9a-f]{32}$/;
+  var pollTimer = null;
+
+  function tokenFromHash() {
+    var m = /(?:^|[?&#])t=([0-9a-f]{32})/.exec(location.hash);
+    return m ? m[1] : null;
+  }
+
+  function fetchLatest(token) {
+    fetch('/api/diag/latest?t=' + token, { cache: 'no-store' })
+      .then(function (res) {
+        if (res.status === 404) {
+          $verdict.className = 'verdict gray';
+          $verdict.textContent = 'アプリからまだ届いていません（トレイの「診断ページで見る」を実行してください）。';
+          $verdictNote.hidden = true;
+          $cards.hidden = true;
+          $btnShare.hidden = true;
+          return null;
+        }
+        if (!res.ok) throw new Error('http ' + res.status);
+        return res.json();
+      })
+      .then(function (body) {
+        if (!body || !body.diag) return;
+        render(body.diag);
+      })
+      .catch(function () {
+        $verdict.className = 'verdict red';
+        $verdict.textContent = '診断データの取得に失敗しました。ページを再読み込みしてください。';
+      });
+  }
+
+  var diagToken = tokenFromHash();
+  if (diagToken) {
+    document.getElementById('introAuto').hidden = false;
+    document.getElementById('introManual').hidden = true;
+    fetchLatest(diagToken);
+    // 表示中だけ30秒間隔でポーリングし、非表示になったら止める(不要な通信をしない)。
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible') {
+        fetchLatest(diagToken);
+        if (!pollTimer) pollTimer = setInterval(function () { fetchLatest(diagToken); }, 30000);
+      } else if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    });
+    if (document.visibilityState === 'visible') {
+      pollTimer = setInterval(function () { fetchLatest(diagToken); }, 30000);
+    }
+  }
 
   $btnShare.addEventListener('click', function () {
     if (!lastSnapshot) return;

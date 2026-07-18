@@ -1,0 +1,10 @@
+name = "soushin-suggest-link"
+compatibility_date = "2026-07-01"
+pages_build_output_dir = "."
+
+# 診断ページ自動送信(_docs/SHINDAN-AUTO-SEND-DESIGN.md)用のKVストレージ。
+# 匿名トークンをキーに、診断カウンターJSONを最新1件だけ一時保持する(TTLで自動削除)。
+[[kv_namespaces]]
+binding = "DIAG_KV"
+id = "ae2d37f05ce7452599123048edbdb8ef"
+preview_id = "5f10d73687aa42d49dc57ae466f8d0bf"
