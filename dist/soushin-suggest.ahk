@@ -23,7 +23,7 @@ if A_IsCompiled
 ;  対応アプリ・送信ルールは sites.ini、定型文は snippets.ini で編集できます（同梱）。
 ;  トレイのアイコンを右クリック -> Suspend Hotkeys / Exit
 
-global AppVersion := "1.22.1"
+global AppVersion := "1.22.3"
 global CopyOnSelect := true, dragX := 0, dragY := 0, dragT := 0
 global SitesConfig := Map()
 global SiteRules := []
@@ -162,9 +162,13 @@ DiagShindanBaseUrl() {
     return "https://soushin-suggest.link/shindan/"
 }
 
-; WinHttpRequestで同期POST。タイムアウトは合計最大9秒(SetTimeouts引数)。呼び出しは必ず
-; SetTimer(-1)のワンショット経由にし、クリップボード監視・ホットキーのコールパスから
-; 直接呼ばない(設計書C-3/G-3)。失敗は診断カウンター自身に記録する(嘘をつかない診断)。
+; WinHttpRequestで同期POST。タイムアウトは合計最大9秒(SetTimeouts引数)。
+; 重大バグ修正(2026-07-18): この関数は同期(Open第3引数=false)で呼ばれており、送信中は
+; メインスレッドが最大9秒ブロックされる。常時自動送信の追加でアプリ起動のたびに呼ばれる
+; ようになったため、ちょうどこのブロック中にランチャーGUIの構築が割り込むと、リストが
+; 描画途中のまま止まった状態(白化)になる不具合が実機で確認された。手動の「診断ページで見る」
+; 経由(DiagPushAndOpen)はユーザー操作の直接応答なので同期のままでよいが、バックグラウンド
+; 自動送信(DiagAutoSendTick)はUIスレッドと重ならない専用の非同期関数を使う(下記DiagPushAsync)。
 DiagPush(token) {
     global DiagEndpoint
     payload := '{"token":"' . token . '","diag":' . BuildDiagText() . '}'
@@ -181,6 +185,45 @@ DiagPush(token) {
         DiagBump("diagPushFail")
         return false
     }
+}
+
+; DiagPushの非同期版。WinHttpRequestを非同期モードで開始し、完了をポーリングで待つことで
+; メインスレッドをブロックしない(ランチャーGUI構築等と衝突させないための専用経路)。
+; onComplete(ok)は完了時に1回だけ呼ばれる。
+DiagPushAsync(token, onComplete) {
+    global DiagEndpoint
+    payload := '{"token":"' . token . '","diag":' . BuildDiagText() . '}'
+    try {
+        req := ComObject("WinHttp.WinHttpRequest.5.1")
+        req.SetTimeouts(2000, 2000, 2000, 3000)
+        req.Open("POST", DiagEndpoint, true)   ; true=非同期
+        req.SetRequestHeader("Content-Type", "application/json")
+        req.Send(payload)
+    } catch {
+        DiagBump("diagPushFail")
+        onComplete(false)
+        return
+    }
+    DiagPushAsyncPoll(req, onComplete, 0)
+}
+
+; 200msごとに完了をポーリング。最大45回(9秒)で諦める(SetTimeoutsの合計上限と揃える)。
+DiagPushAsyncPoll(req, onComplete, tries) {
+    ready := 0
+    try ready := req.ReadyState
+    if (ready = 4) {   ; READYSTATE_COMPLETE
+        ok := false
+        try ok := (req.Status = 204)
+        DiagBump(ok ? "diagPushOk" : "diagPushRejected")
+        onComplete(ok)
+        return
+    }
+    if (tries >= 45) {
+        DiagBump("diagPushFail")
+        onComplete(false)
+        return
+    }
+    SetTimer(() => DiagPushAsyncPoll(req, onComplete, tries + 1), -200)
 }
 
 ; --- 常時自動送信(2026-07-18・ユーザー要望「ドメインを開くだけで見えるように」) ---
@@ -200,14 +243,20 @@ StartDiagAutoSendIfConsented() {
     SetTimer(DiagAutoSendTick, 300000)      ; 以後5分間隔
 }
 
+; メインスレッドをブロックしないDiagPushAsync経由で送信する(地雷: 同期DiagPushを
+; ここで使うとランチャーGUI構築等と衝突し白化を誘発する。上記DiagPush冒頭コメント参照)。
 DiagAutoSendTick() {
-    global DiagAutoSendFailCount
     token := EnsureDiagToken()
     if (token = "") {
         SetTimer(DiagAutoSendTick, 0)
         return
     }
-    if DiagPush(token) {
+    DiagPushAsync(token, DiagAutoSendOnComplete)
+}
+
+DiagAutoSendOnComplete(ok) {
+    global DiagAutoSendFailCount
+    if ok {
         DiagAutoSendFailCount := 0
     } else {
         DiagAutoSendFailCount++
@@ -1385,18 +1434,12 @@ ShowLauncher() {
     ; +Borderの細い外枠が窮屈に見えるとの指摘(2026-07-18)により撤去。ウィンドウ境界はOS標準の
     ; 影・DWM縁取りに任せ、中身(F0F6FF背景)がそのまま画面いっぱいに見える構成にする。
     LauncherGui := Gui("-Caption +AlwaysOnTop +ToolWindow")
-    ; 白化バグの根本対策(2026-07-18): サイドボタンでのスクショ撮影時、ランチャーGUIの一部
-    ; (ListView→定型文タブ→ヘッダー全体→検索Editの枠線、と対症療法のたびに対象を変えて)が
-    ; 再描画されず消える不具合が3回連続で再発した。原因はListView(+LV0x10000)だけがダブル
-    ; バッファ防御されており、Tab3・Editにはこの防御が一切無かったこと。個別コントロール単位の
-    ; InvalidateRect/RedrawWindow対症療法(モグラ叩き)をやめ、ウィンドウ全体をDWM合成による
-    ; 構造的ダブルバッファ対象にする。GWL_EXSTYLE(-20)にWS_EX_COMPOSITED(0x02000000)を追加すると、
-    ; 子コントロール個々のWM_PAINTがオフスクリーンで合成されてから一括転送されるため、
-    ; Tab3/Edit/ListViewを問わず「一部だけ再描画が抜ける」現象自体が起こらなくなる。
-    ; 詳細: C:\Users\info\.claude\plans\deep-foraging-thacker.md
-    GWL_EXSTYLE := -20, WS_EX_COMPOSITED := 0x02000000
-    exStyle := DllCall("GetWindowLong", "Ptr", LauncherGui.Hwnd, "Int", GWL_EXSTYLE, "Int")
-    DllCall("SetWindowLong", "Ptr", LauncherGui.Hwnd, "Int", GWL_EXSTYLE, "Int", exStyle | WS_EX_COMPOSITED)
+    ; WS_EX_COMPOSITED撤回(2026-07-18): スクショ撮影時のZ-order競合による白化を構造的に解決する
+    ; 狙いで一度導入したが、実機で「スクショ操作と無関係に、ランチャーを開くたび常に真っ白」という
+    ; 別の重大な副作用を引き起こすことが判明した(この環境のComctl32/DWM構成との相性問題と推測)。
+    ; 撤去した状態で常時白化は解消(実機確認済み)。スクショ時の白化対策は、個別コントロールへの
+    ; 明示的な再描画呼び出し(下記RedrawLauncherHeader等)で引き続き対応する。
+    ; 詳細: _docs/LAUNCHER-REDRAW-ROOT-CAUSE-FIX.md(このファイルにも撤回の経緯を追記する)
     ; 履歴/定型文どちらのタブでも同じ水色に統一(タブ切替で背景色が変わる違和感があるとの
     ; ユーザー指摘: 2026-07-18)。リスト(ListView/ListBox)側の個別背景色も同じF0F6FFに揃えてある。
     LauncherGui.BackColor := "F0F6FF"
@@ -1769,11 +1812,11 @@ PushClipImage(dib, w, h) {
     ; フラッシュ演出とのZ-order競合による白化がそのまま残ることが実機で確認された(2026-07-18)。
     ; アクティブなタブが定型文側なら、そちらも同様に強制再描画する。
     SetTimer(RedrawActiveLauncherSnippetsTab, -1)
-    ; 個別コントロール(Tab3→検索Edit)を狙い撃ちする対症療法を3回繰り返しても対象を変えて
-    ; 再発したため、根本対策としてLauncherGui全体にWS_EX_COMPOSITED(ShowLauncher冒頭で付与)を
-    ; 適用した。ウィンドウ全体へのInvalidateRect(旧RedrawLauncherHeader)は、-Redraw/+Redraw
-    ; で明示再描画するリスト側と競合して「リストだけ真っ白」を再発させたため撤去した
-    ; (2026-07-18実機確認)。WS_EX_COMPOSITED自体の効果だけで様子を見る。
+    ; ヘッダー(Tab3・検索Edit)の再描画。過去の経緯(_docs/LAUNCHER-REDRAW-ROOT-CAUSE-FIX.md):
+    ; ①ウィンドウ全体InvalidateRectはリスト側の-Redraw/+Redrawと競合し「リストだけ真っ白」を誘発
+    ; ②ウィンドウ全体をWS_EX_COMPOSITED化する根本対策は、この環境で常時白化という別の重大な
+    ;   副作用を起こしたため撤回(2026-07-18)。個別コントロールへのピンポイントな再描画に戻す。
+    SetTimer(RedrawLauncherHeader, -1)
 }
 
 RedrawActiveLauncherSnippetsTab() {
@@ -1782,6 +1825,17 @@ RedrawActiveLauncherSnippetsTab() {
         return
     q := IsObject(LauncherSearchEdit) ? Trim(LauncherSearchEdit.Value) : ""
     FillLauncherSnippetsLV(LauncherLvS, q)
+}
+
+RedrawLauncherHeader() {
+    global LauncherGui, LauncherTab, LauncherSearchEdit
+    if !IsObject(LauncherGui)
+        return
+    if IsObject(LauncherTab)
+        DllCall("InvalidateRect", "Ptr", LauncherTab.Hwnd, "Ptr", 0, "Int", true)
+    if IsObject(LauncherSearchEdit)
+        DllCall("RedrawWindow", "Ptr", LauncherSearchEdit.Hwnd, "Ptr", 0, "Ptr", 0
+            , "UInt", 0x0001 | 0x0400)   ; RDW_INVALIDATE | RDW_FRAME(枠線ごと再描画)
 }
 
 ; ホット窓に居ない(降格済み)画像はv.dibが無く、pngPathからオンデマンドで復元する。
