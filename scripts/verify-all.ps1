@@ -11,6 +11,7 @@ $probes = @(
     'verify-diagnostics.ps1'
     'verify-history-persist.ps1'
     'verify-history-delete-persist.ps1'
+    'verify-history-promote-on-paste.ps1'
     'verify-snippet-promote.ps1'
     'verify-clip-transform.ps1'
     'verify-ui-snapshot.ps1'

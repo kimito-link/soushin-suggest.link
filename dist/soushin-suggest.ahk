@@ -23,7 +23,7 @@ if A_IsCompiled
 ;  対応アプリ・送信ルールは sites.ini、定型文は snippets.ini で編集できます（同梱）。
 ;  トレイのアイコンを右クリック -> Suspend Hotkeys / Exit
 
-global AppVersion := "1.23.1"
+global AppVersion := "1.23.2"
 global CopyOnSelect := true, dragX := 0, dragY := 0, dragT := 0
 global SitesConfig := Map()
 global SiteRules := []
@@ -70,6 +70,7 @@ global ClipHistoryPersist := true, ClipHistLoadMax := 10000
 global HistStoreLoadState := 0             ; 分割パースの進行状態オブジェクト(0=停止)
 global HistStoreRewritePending := false    ; 項目削除後のストア書き直し予約フラグ
 global HistStoreDeletedTexts := []         ; 「この履歴を削除」された本文。書き直し確定でクリア
+global HistStorePromotedTexts := []        ; 「ペーストして使った」本文と新時刻。書き直し確定でクリア
 
 ; --- 診断計器: メモリのみ・プロセス終了で消える(非永続原則と同居)。書込入口はDiagBumpだけ。
 ; 経緯・設計判断は_docs/SELF-DIAGNOSTIC-INSTRUMENTATION-DESIGN.md参照 ---
@@ -1798,6 +1799,7 @@ PasteHistoryAt(idx) {
     if (idx < 1 || idx > ClipHistory.Length)
         return
     v := ClipHistory[idx]
+    PromoteHistoryItemToTop(v)   ; 使うたびに先頭へ(定型文のPromoteSnippetToTopと同じ「直近使用順」思想)
     if (v.type = "image") {
         dib := GetImageDib(v)                 ; 降格画像はここでPNGからオンデマンド復元(失敗時はFlash済み)
         CloseLauncher()
@@ -1807,6 +1809,23 @@ PasteHistoryAt(idx) {
     }
     CloseLauncher()
     PasteText(v.text)
+}
+
+; 履歴を「使った」(貼り付けに選んだ)ときに先頭へ昇格し、時刻も現在時刻へ更新する。
+; PushClipHistoryの重複昇格(662行)と同じ「常に新しい順・先頭積み」の不変条件に従う。
+; 呼び出し元(PasteHistoryAt)は直後に必ずCloseLauncher()するため、ここでの再描画は不要
+; (FillLauncherSnippetsLV系の全消去→再構築コストを、閉じる直前に無駄払いしない)。
+PromoteHistoryItemToTop(v) {
+    global ClipHistory
+    for i, x in ClipHistory
+        if (x = v) {                          ; オブジェクト同一性比較(AHK v2は参照比較)
+            ClipHistory.RemoveAt(i)
+            break
+        }
+    v.time := NowWithWeekday()                ; 「にコピー」ツールチップ表示も直近使用時刻に更新
+    ClipHistory.InsertAt(1, v)
+    if (v.type = "text")                      ; 画像はストア非対応(FinishHistoryStoreLoadがtype!=textを捨てる)
+        HistStoreMarkPromoted(v.text, v.time)
 }
 
 ; クリック(選択)→即ペースト。旧ListBox Changeイベントの後継(履歴タブのListView化に伴う)。
@@ -2702,34 +2721,55 @@ HistStoreMarkDeleted(text) {
     SetTimer(RewriteHistStoreIfPending, -2000)
 }
 
+; 履歴を「使った」(貼り付けに選んだ)ことの永続反映。旧行を除去し、現在時刻で末尾に付け直す
+; ことで、FinishHistoryStoreLoadの「末尾(新)から走査」ロジックにより次回起動時も先頭に来る。
+; 新規コンテンツの書き込みではなく既存行の並び替えなので、CommitPendingArchiveの検疫を経由
+; しない(67行のコメントが指す「書き込み地点」の制約は新規コピーの検疫の話であり、
+; 削除・並び替えはHistStoreMarkDeletedと同じ「差分書き直し」カテゴリに属する)。
+HistStoreMarkPromoted(text, timeStr) {
+    global HistStorePromotedTexts, ClipHistoryPersist, HistStoreRewritePending
+    if !ClipHistoryPersist
+        return
+    HistStorePromotedTexts.Push({text: text, time: timeStr})
+    HistStoreRewritePending := true
+    SetTimer(RewriteHistStoreIfPending, -2000)
+}
+
 RewriteHistStoreIfPending(*) {
-    global HistStoreRewritePending, HistStoreDeletedTexts
+    global HistStoreRewritePending, HistStoreDeletedTexts, HistStorePromotedTexts
     if !HistStoreRewritePending
         return
     HistStoreRewritePending := false
     path := HistoryStorePath()
     if !FileExist(path) {
         HistStoreDeletedTexts := []
+        HistStorePromotedTexts := []
         return
     }
     del := Map()
     for t in HistStoreDeletedTexts
         del[t] := 1
+    promoted := Map()                          ; text -> 最新のtimeStr(同一本文が複数回昇格されても最後の時刻だけ使う)
+    for p in HistStorePromotedTexts
+        promoted[p.text] := p.time
     try {
         rows := ParseCsv(RegExReplace(FileRead(path, "UTF-8"), "^\x{FEFF}"))
         out := "time,type,text`r`n"
         for i, row in rows {
             if (i = 1 && row.Length >= 3 && Trim(row[1]) = "time")
                 continue                       ; ヘッダは自前で書く
-            if (row.Length < 3 || del.Has(row[3]))
-                continue                       ; 削除対象・破損行を除去
+            if (row.Length < 3 || del.Has(row[3]) || promoted.Has(row[3]))
+                continue                       ; 削除対象・破損行・昇格対象(旧位置)を除去
             out .= CsvField(row[1]) . "," . CsvField(row[2]) . "," . CsvField(row[3]) . "`r`n"
         }
+        for text, timeStr in promoted           ; 昇格分は末尾に新時刻で付け直す(=次回起動時に先頭)
+            out .= CsvField(timeStr) . ",text," . CsvField(text) . "`r`n"
         tmp := path . ".tmp"
         try FileDelete(tmp)
         FileAppend(out, tmp, "UTF-8")
         FileMove(tmp, path, 1)                 ; 一時ファイル→原子的差し替え(途中失敗なら旧ストア残存=fail-closed)
-        HistStoreDeletedTexts := []            ; 成功時のみクリア(失敗なら次回削除時に再試行される)
+        HistStoreDeletedTexts := []             ; 成功時のみクリア(失敗なら次回削除時に再試行される)
+        HistStorePromotedTexts := []
     }
 }
 
