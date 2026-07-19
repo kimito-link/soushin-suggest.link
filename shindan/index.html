@@ -115,17 +115,45 @@
   #privacy { font-size: 13px; color: #444; }
   #privacy b { color: #111; }
   #privacy ul { margin: 6px 0; padding-left: 20px; }
+  #uiMeta { font-size: 13px; color: #444; margin-bottom: 8px; }
+  #uiChecks { margin-bottom: 10px; }
+  #uiChecks .kcard { margin-bottom: 6px; }
+  #uiTable { overflow-x: auto; }
+  #uiTable table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  #uiTable th, #uiTable td { padding: 5px 8px; border-bottom: 1px solid #ddd; text-align: left; white-space: nowrap; }
+  #uiTable th { color: #555; font-weight: 600; }
+  #uiTable tr.warn td { background: #fff6d8; }
+  #uiTable tr.err td { background: #ffe3e3; }
   @media (prefers-color-scheme: dark) {
     body { background: #14161a; color: #e6e6e6; }
     .card { background: #1e2127; border-color: #333; }
     .card.intro { background: #17263a; border-color: #2a4a6e; }
     #paste { background: #1a1c20; color: #e6e6e6; border-color: #556; }
     .kcard { background: #1a1c20; border-color: #333; }
+    .kcard .label { color: #aab0bb; }
+    .kcard .msg { color: #c2c8d2; }
     .kcard.gray { background: #22252b; color: #888; }
+    .kcard.gray .value { color: #9098a4; }
+    .verdict.red { background: #3a1414; color: #ff9d9d; border-color: #6e2626; }
+    .verdict.yellow { background: #3a3012; color: #f5d878; border-color: #6e5a20; }
+    .verdict.green { background: #123a1e; color: #7de3a0; border-color: #1f6e3a; }
+    .verdict.gray { background: #2a2d33; color: #ccc; border-color: #444; }
+    .verdict-note { color: #999; }
+    .kcard.red { background: #3a1414; border-color: #6e2626; }
+    .kcard.red .value, .kcard.red .label, .kcard.red .msg { color: #ff9d9d; }
+    .kcard.yellow { background: #3a3012; border-color: #6e5a20; }
+    .kcard.yellow .value, .kcard.yellow .label, .kcard.yellow .msg { color: #f5d878; }
+    .kcard.green { background: #123a1e; border-color: #1f6e3a; }
+    .kcard.green .value, .kcard.green .label, .kcard.green .msg { color: #7de3a0; }
     #privacy { color: #ccc; }
     #privacy b { color: #fff; }
     #verMeta { color: #999; }
     main h2 { color: #ccc; }
+    #uiMeta { color: #999; }
+    #uiTable th, #uiTable td { border-color: #333; }
+    #uiTable th { color: #aab0bb; }
+    #uiTable tr.warn td { background: #3a3012; color: #f5d878; }
+    #uiTable tr.err td { background: #3a1414; color: #ff9d9d; }
   }
 </style>
 </head>
@@ -164,6 +192,7 @@
     <section data-sec="shot"><h2>スクショ直行便（サイドボタン）</h2><div class="grid"></div></section>
     <section data-sec="textFunnel"><h2>テキストの通り道</h2><div class="grid"></div></section>
     <section data-sec="other"><h2>その他の観測値</h2><div class="grid"></div></section>
+    <section data-sec="ui" hidden><h2>🧩 UI構造（開発ビルドのみ）</h2><div id="uiMeta"></div><div id="uiChecks"></div><div id="uiTable"></div></section>
   </main>
 
   <section id="privacy" class="card">
@@ -173,6 +202,7 @@
       <li>データはランダムな一時トークン（あなたの端末を特定する情報ではありません）にのみ紐づき、<b>6時間で自動的に削除</b>されます。</li>
       <li>送信しない使い方（従来どおりの手動貼り付け）もそのまま使えます。貼り付けた内容はブラウザの中だけで処理され、保存もされません（ページを閉じれば消えます。Cookie・localStorage不使用）。</li>
       <li>そもそも診断JSONにはカウンターと設定値しか入っておらず、コピーした文章・画像・アプリ名は含まれません（アプリ側の仕様）。</li>
+      <li>「🧩 UI構造」セクションは開発ビルドのみに現れます。画面の内容ではなく、ボタンや一覧の座標・サイズだけを見ています。</li>
     </ul>
   </section>
 
@@ -401,6 +431,74 @@
     return div;
   }
 
+  // UI構造セクション(_docs/SHINDAN-UI-STRUCT-DESIGN.md C-5)。開発ビルドの診断JSONにだけ
+  // 現れる snapshot.ui を描画する。総合判定(aggregate)には一切合流させない
+  // (本番ユーザー向け判定の意味論をdev専用情報で汚さないため、設計書C-5に明記)。
+  var $uiSection = document.querySelector('section[data-sec="ui"]');
+  var $uiMeta = document.getElementById('uiMeta');
+  var $uiChecks = document.getElementById('uiChecks');
+  var $uiTable = document.getElementById('uiTable');
+
+  function renderUiSection(ui) {
+    if (!ui) { $uiSection.hidden = true; return; }
+    $uiSection.hidden = false;
+
+    $uiMeta.textContent = ui.win + ' ' + ui.w + '×' + ui.h + ' / DPI' + ui.dpi + ' / 取得' + fmtAgo(ui.agoMs);
+
+    var ctrls = ui.ctrls || [];
+    var checks = [];
+    // 赤: vis:1 かつ w=0 || h=0 (描画されないコントロール=レイアウト崩れの典型)
+    var zeroSize = ctrls.filter(function (c) { return c.vis && (c.w === 0 || c.h === 0); });
+    if (zeroSize.length) {
+      checks.push({ level: 'red', label: '寸法ゼロの表示コントロール', value: zeroSize.length + '件',
+        message: '可視状態なのに幅か高さが0のコントロールがあります。レイアウト崩れの典型症状です。' });
+    }
+    // 赤: vis:1 かつ x+w > win.w+MARGIN || y+h > win.h+MARGIN (ウィンドウ外はみ出し)
+    // MARGIN=24: Tab3コントロールは実測でx方向に約17pxの内側マージンを持つ(Win32の
+    // タブ描画領域計算に由来、AHK側のコード・ドキュメントに明記はない)。この正常なマージンを
+    // 誤検知しないよう、+8では足りないため実測値に余裕を持たせた+24を採用する。
+    var OOB_MARGIN = 24;
+    var outOfBounds = ctrls.filter(function (c) {
+      return c.vis && (c.x + c.w > ui.w + OOB_MARGIN || c.y + c.h > ui.h + OOB_MARGIN);
+    });
+    if (outOfBounds.length) {
+      checks.push({ level: 'red', label: 'ウィンドウ外へのはみ出し', value: outOfBounds.length + '件',
+        message: 'コントロールがウィンドウの外まで大きくはみ出しています。' });
+    }
+    // 黄: 表示中のListViewが全て0行、かつhistLen>0 (データはあるのに一覧が空)。
+    // ctrls配列にはランチャーの履歴タブ・定型文タブ両方のListViewが並び、JSON側には
+    // どちらがどちらかを示すフィールドが無い(設計書C-3のスキーマ制約)。個々のListViewを
+    // 履歴用と決め打ちすると誤検知するため、「表示中の全ListViewが0行」という
+    // より保守的な条件に倒す(タブ切替直後で片方が非表示なら vis:0 になり対象から外れる)。
+    var visibleListViews = ctrls.filter(function (c) { return c.t === 'ListView' && c.vis; });
+    var allEmpty = visibleListViews.length > 0 && visibleListViews.every(function (c) { return c.rows === 0; });
+    if (allEmpty && lastSnapshot && lastSnapshot.histLen > 0) {
+      checks.push({ level: 'yellow', label: 'データはあるのに空のリスト', value: visibleListViews.length + '件',
+        message: '履歴が' + lastSnapshot.histLen + '件あるのに、表示中のListViewが全て0行です。' });
+    }
+
+    $uiChecks.innerHTML = '';
+    if (!checks.length) {
+      var okCard = { id: 'uiOk', label: '機械判定', value: '✓', level: 'green', message: '寸法ゼロ・はみ出し・空リストのいずれも検出されませんでした。' };
+      $uiChecks.appendChild(renderCard(okCard));
+    } else {
+      checks.forEach(function (chk) {
+        $uiChecks.appendChild(renderCard({ id: 'uiChk', label: chk.label, value: chk.value, level: chk.level, message: chk.message }));
+      });
+    }
+
+    var rows = ctrls.map(function (c) {
+      if (c.trunc) return '<tr><td colspan="6">…（' + ctrls.length + '件中、以降は省略）</td></tr>';
+      var isZero = c.vis && (c.w === 0 || c.h === 0);
+      var isOut = c.vis && (c.x + c.w > ui.w + OOB_MARGIN || c.y + c.h > ui.h + OOB_MARGIN);
+      var cls = (isZero || isOut) ? 'err' : '';
+      var rowsCol = (c.t === 'ListView') ? (c.rows + '行/' + c.cols + '列') : '—';
+      return '<tr class="' + cls + '"><td>' + c.t + '</td><td>' + c.x + ',' + c.y + '</td>' +
+        '<td>' + c.w + '×' + c.h + '</td><td>' + (c.vis ? '表示' : '非表示') + '</td><td>' + rowsCol + '</td></tr>';
+    }).join('');
+    $uiTable.innerHTML = '<table><thead><tr><th>種類</th><th>位置(x,y)</th><th>寸法(w×h)</th><th>可視</th><th>行/列</th></tr></thead><tbody>' + rows + '</tbody></table>';
+  }
+
   var lastSnapshot = null;
   var lastVerdictText = '';
 
@@ -431,6 +529,8 @@
 
     $cards.hidden = false;
     $btnShare.hidden = false;
+
+    renderUiSection(snapshot.ui);
   }
 
   function handleText(text) {
