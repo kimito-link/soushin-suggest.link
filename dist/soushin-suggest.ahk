@@ -23,7 +23,7 @@ if A_IsCompiled
 ;  対応アプリ・送信ルールは sites.ini、定型文は snippets.ini で編集できます（同梱）。
 ;  トレイのアイコンを右クリック -> Suspend Hotkeys / Exit
 
-global AppVersion := "1.22.8"
+global AppVersion := "1.23.0"
 global CopyOnSelect := true, dragX := 0, dragY := 0, dragT := 0
 global SitesConfig := Map()
 global SiteRules := []
@@ -641,6 +641,71 @@ PushClipHistory(text) {
 NowWithWeekday() {
     static wd := ["日", "月", "火", "水", "木", "金", "土"]
     return FormatTime(, "yyyy/MM/dd") . "(" . wd[FormatTime(, "WDay")] . ") " . FormatTime(, "HH:mm:ss")
+}
+
+; --- ワンショット整形/変換(Clibor同等化・第2ラウンド)。純関数のみ・履歴/ini/クリップボードに触らない ---
+; LCMapStringW: AHKに全角半角・かな変換の組み込みが無いための正規ルート。LCID 0x0411(ja-JP)明示。
+; カナの半全変換はロケール依存のため既定LCIDに任せない。変換で文字数は増減する
+; (半角ｶﾞ=2単位→全角ガ=1単位、逆は1→2)ため、必要長の問い合わせ→バッファ確保の2段呼び出しが必須。
+LCMapJa(text, flags) {
+    if (text = "")
+        return text
+    n := DllCall("kernel32\LCMapStringW", "UInt", 0x0411, "UInt", flags
+        , "Str", text, "Int", StrLen(text), "Ptr", 0, "Int", 0)
+    if (n <= 0)
+        return text                            ; 失敗時は原文のまま(fail-closed)
+    buf := Buffer(n * 2, 0)
+    n2 := DllCall("kernel32\LCMapStringW", "UInt", 0x0411, "UInt", flags
+        , "Str", text, "Int", StrLen(text), "Ptr", buf, "Int", n)
+    return n2 ? StrGet(buf, n2, "UTF-16") : text
+}
+
+; メニュー項目定義。fnは必ず「文字列→文字列」の純関数。
+ClipTransformDefs() {
+    static defs := 0
+    if !defs
+        defs := {format: [
+            {name: "改行を除去して1行に",            fn: (t) => RegExReplace(t, "\R+", "")},
+            {name: "改行を半角スペースに",          fn: (t) => RegExReplace(t, "\R+", " ")},
+            {name: "前後の空白を削除",              fn: (t) => Trim(t, " `t`r`n　")},
+            {name: "各行の行頭・行末の空白を削除",  fn: (t) => RegExReplace(t, "m)^[ `t　]+|[ `t　]+$", "")},
+            {name: "連続する空白を1つに",           fn: (t) => RegExReplace(t, "[ `t　]{2,}", " ")},
+            {name: "引用記号(>)を除去",             fn: (t) => RegExReplace(t, "m)^(>[ `t]?)+", "")}
+        ], convert: [
+            {name: "大文字に (ABC)",       fn: (t) => StrUpper(t)},
+            {name: "小文字に (abc)",       fn: (t) => StrLower(t)},
+            {name: "全角→半角 (英数カナ)", fn: (t) => LCMapJa(t, 0x00400000)},   ; LCMAP_HALFWIDTH
+            {name: "半角→全角 (英数カナ)", fn: (t) => LCMapJa(t, 0x00800000)},   ; LCMAP_FULLWIDTH
+            {name: "ひらがな→カタカナ",    fn: (t) => LCMapJa(t, 0x00200000)},   ; LCMAP_KATAKANA
+            {name: "カタカナ→ひらがな",    fn: (t) => LCMapJa(t, 0x00100000)}    ; LCMAP_HIRAGANA
+        ]}
+    return defs
+}
+
+; AHK v2のforループ変数はクロージャに参照捕捉されるため、直接 (*) => PasteTransformed(v, d.fn) と
+; 書くと全メニュー項目が最後のfnになる(実装後に整形1番目と6番目が異なる結果か必ず確認すること)。
+; このファクトリ経由で束縛を固定する。
+MakeTransformHandler(v, fn) {
+    return (*) => PasteTransformed(v, fn)
+}
+
+; 通常選択=変換して貼り付け / Shiftを押しながら選択=変換結果をコピーのみ。
+; 貼り付け経路はPasteText(SelfClipTick付き)なので変換結果は履歴に入らない(原文が履歴の正)。
+; コピーのみ経路は素のA_Clipboard代入=監視が拾って先頭昇格(CopyHistoryItemと同じ意図された挙動)。
+PasteTransformed(v, fn) {
+    out := ""
+    try out := fn(v.text)
+    if (out = "") {
+        Flash("結果が空になったため中止しました", 1500)
+        return
+    }
+    copyOnly := GetKeyState("Shift", "P")
+    CloseLauncher()
+    if copyOnly {
+        A_Clipboard := out
+        Flash("変換結果をコピーしました（貼り付けはしていません）", 1400)
+    } else
+        PasteText(out)
 }
 
 ^#c:: {
@@ -1339,6 +1404,13 @@ SnipMgrPickKey(hk, *) {
     if (n > SnipMgrItems.Length)
         return
     SnipMgrLV.Modify(n, "+Select +Focus Vis")
+}
+
+; Ctrl+Shift+F(第2ラウンド)。今アクティブなタブに応じて定型文/履歴どちらの検索欄へフォーカスするか切替。
+; タブ未生成時のフォーカス失敗をtryでfail-closedに握る。
+SnipMgrFocusSearch(*) {
+    global SnipMgrTab, SnipMgrSearchEd, SnipMgrHistEd
+    try (SnipMgrTab.Value = 1) ? SnipMgrSearchEd.Focus() : SnipMgrHistEd.Focus()
 }
 
 ; 行単位の書換え/削除。書換え前に宛先行のラベルを検証し、外部編集でズレていたら中止(fail-closed)。
@@ -3021,6 +3093,20 @@ LauncherContextMenu(g, ctrl, item, isRC, x, y) {
             if (p := RunnablePathFrom(v.text))
                 m.Add(InStr(FileExist(p), "D") ? "このフォルダを開く" : "このファイルを開く", (*) => OpenHistoryPath(p))
             m.Add("定型文に登録", (*) => PromoteHistoryItem(v))   ; 画像はsnippets.ini非対応のため出さない
+            ; --- ワンショット整形/変換(Clibor同等化・第2ラウンド)。Shift押しながら選択でコピーのみ ---
+            defs := ClipTransformDefs()
+            mF := Menu(), mC := Menu()
+            for d in defs.format
+                mF.Add(d.name, MakeTransformHandler(v, d.fn))
+            for d in defs.convert
+                mC.Add(d.name, MakeTransformHandler(v, d.fn))
+            for sub in [mF, mC] {
+                sub.Add()
+                sub.Add("Shift+選択でコピーのみ", (*) => 0)
+                sub.Disable("Shift+選択でコピーのみ")     ; 押せないヒント行
+            }
+            m.Add("整形して貼り付け", mF)
+            m.Add("変換して貼り付け", mC)
         }
         m.Add("コピーのみ（貼り付けない）", (*) => CopyHistoryItem(v))
         m.Add()
@@ -3307,6 +3393,14 @@ HotIf
 HotIf (*) => IsObject(SnipMgrGui) && WinActive("ahk_id " . SnipMgrGui.Hwnd) && SnipMgrLVFocused()
 Loop 10
     Hotkey Mod(A_Index, 10) . "", SnipMgrPickKey
+HotIf
+; Ctrl+Shift+F = 検索へフォーカス(Clibor同キー・第2ラウンド)。ランチャーは開いた瞬間に検索欄へ
+; 自動フォーカス済みだが、一覧クリック後に検索へ戻る手段として両窓に同キーを揃える。
+HotIf (*) => IsObject(LauncherGui) && WinActive("ahk_id " . LauncherGui.Hwnd)
+Hotkey "^+f", (*) => LauncherSearchEdit.Focus()
+HotIf
+HotIf (*) => IsObject(SnipMgrGui) && WinActive("ahk_id " . SnipMgrGui.Hwnd)
+Hotkey "^+f", SnipMgrFocusSearch
 HotIf
 EnsureStartMenuShortcut()   ; トースト通知アイコンのためのAUMID登録(TrayTipより前に実行する必要がある)
 TrayTip("送信サジェスト", "常駐を開始しました", "Mute")
