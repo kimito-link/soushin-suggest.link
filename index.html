@@ -181,6 +181,7 @@ h1 {
 }
 h1 .hi { color: var(--accent); }
 h1 .strike { text-decoration: line-through; text-decoration-color: var(--muted); color: var(--muted); font-weight: 500; }
+.hero-sub { font-size: clamp(15px, 2.4vw, 18px); font-weight: 700; color: var(--fg); margin: -8px 0 16px; }
 .hero-lede { color: var(--muted); font-size: 14.5px; max-width: 52ch; margin: 0 0 22px; }
 .hero-cta-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
 .hero-cta-note { font-size: 12px; color: var(--muted); }
@@ -1490,7 +1491,8 @@ footer { padding: 32px 0 48px; }
     <div class="hero-grid">
       <div>
         <div class="eyebrow">誰でも使える／ショートカットキー不要</div>
-        <h1>右手だけで、<br><span class="hi">ほとんど終わる。</span></h1>
+        <h1>マウスだけで、<br><span class="hi">スクショもコピペも。</span></h1>
+        <p class="hero-sub">履歴と定型文が、作業を加速する。</p>
         <p class="hero-lede">
           「困ったらスクショを撮ってAIに聞く」——今やみんなやっていることです。
           でも <span class="strike">Win+Shift+S</span> を押しまくるのは地味に疲れるし、
