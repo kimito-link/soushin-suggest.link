@@ -23,7 +23,7 @@ if A_IsCompiled
 ;  対応アプリ・送信ルールは sites.ini、定型文は snippets.ini で編集できます（同梱）。
 ;  トレイのアイコンを右クリック -> Suspend Hotkeys / Exit
 
-global AppVersion := "1.23.0"
+global AppVersion := "1.23.1"
 global CopyOnSelect := true, dragX := 0, dragY := 0, dragT := 0
 global SitesConfig := Map()
 global SiteRules := []
@@ -112,6 +112,12 @@ global DiagEndpoint := "https://soushin-suggest.link/api/diag/report"
 ; 実測した結果をキャッシュする。ピクセル値そのものは送らず、点数と判定語のみ送信する。
 global DiagPaintBody := ""
 global DiagPaintTick := 0
+
+; UI構造スナップショット(開発ビルド専用、_docs/SHINDAN-UI-STRUCT-DESIGN.md)。書き込みコードは
+; Ahk2Exe-Ignoreブロック内にのみ存在するため、本番exeでは恒久的に空("")のまま = uiフィールドは
+; 絶対に送信されない。'"win":"launcher","w":460,...' 形式(外側の{}なし)。
+global DiagUiSnapBody := ""
+global DiagUiSnapTick := 0
 
 ; プロセス起動ごとに再生成する使い捨てトークン。ファイル/レジストリに書かない
 ; (書けば擬似デバイスIDになるため禁止。設計書C-1)。BCryptGenRandomでCSPRNGから生成する
@@ -302,8 +308,44 @@ BuildDiagText() {
     s .= "}"                                  ; countersを閉じる
     if (DiagPaintBody != "")
         s .= ',"paint":{"agoMs":' . (now - DiagPaintTick) . ',' . DiagPaintBody . '}'
+    if (DiagUiSnapBody != "")                 ; 本番では恒久的に空(グローバル書き込みはIgnoreブロック内のみ)
+        s .= ',"ui":{"agoMs":' . (now - DiagUiSnapTick) . ',' . DiagUiSnapBody . '}'
     return s . "}"
 }
+
+;@Ahk2Exe-IgnoreBegin
+; UI構造ダンプ(開発ビルド専用、_docs/SHINDAN-UI-STRUCT-DESIGN.md)。
+; 【白化バグ回避の不変条件】この関数はユーザー操作起点(ShowLauncher末尾、Show()完了後)から
+; しか呼ばない。タイマー・送信経路(BuildDiagText/DiagPushAsync)からWin32 UI読み取りを
+; 行うことを禁止する。送信時に触るのはキャッシュ済み文字列のみ。
+DiagCaptureUiSnapshot(g, name) {
+    global DiagUiSnapBody, DiagUiSnapTick
+    if A_IsCompiled            ; 第2層ガード(第1層=Ahk2Exe-Ignoreが剥がれた場合の保険)
+        return
+    try {
+        g.GetPos(, , &gw, &gh)
+        s := '"win":"' . name . '","dpi":' . A_ScreenDPI . ',"w":' . gw . ',"h":' . gh . ',"ctrls":['
+        n := 0
+        for hwnd, ctrl in g {
+            if (n >= 40) {                    ; report.tsの8KB上限を絶対に脅かさない
+                s .= ',{"trunc":1}'
+                break
+            }
+            ctrl.GetPos(&cx, &cy, &cw, &ch)
+            e := '{"t":"' . ctrl.Type . '","x":' . cx . ',"y":' . cy
+               . ',"w":' . cw . ',"h":' . ch . ',"vis":' . (ctrl.Visible ? 1 : 0)
+            if (ctrl.Type = "ListView")
+                e .= ',"rows":' . ctrl.GetCount() . ',"cols":' . ctrl.GetCount("Col")
+            s .= (n ? "," : "") . e . "}"
+            n++
+        }
+        DiagUiSnapBody := s . "]"
+        DiagUiSnapTick := A_TickCount
+    } catch {
+        DiagBump("uiSnapFail")   ; 失敗しても本体に一切影響させない(fail-silent)
+    }
+}
+;@Ahk2Exe-IgnoreEnd
 
 ; 描画実測プローブ。読み取り専用(GetDC/GetPixel/ReleaseDC/GetCount/LVM_GETITEMRECT)のみで、
 ; 【不変条件】SETREDRAW/InvalidateRect/RedrawWindow/Move等、描画状態を書き換えるAPIは絶対に呼ばない。
@@ -1734,6 +1776,9 @@ ShowLauncher() {
     WinActivate("ahk_id " . LauncherGui.Hwnd)
     LauncherSearchEdit.Focus()   ; 検索EditはTab3の後に追加され既定フォーカスにならないため明示要求(出現直後に即タイプで絞り込めるように)
     DiagSchedulePaintProbe()   ; 描画実測プローブ(_docs/SHINDAN-PAINT-PROBE-DESIGN.md)
+    ;@Ahk2Exe-IgnoreBegin
+    DiagCaptureUiSnapshot(LauncherGui, "launcher")   ; レイアウト確定後・表示直後の1回だけ(開発ビルド専用)
+    ;@Ahk2Exe-IgnoreEnd
     SetTimer(CheckLauncherFocus, 150)
     SetTimer(LauncherWatchDrag, 30)
     LauncherHoverLast := "", SetTimer(LauncherWatchHover, 120)

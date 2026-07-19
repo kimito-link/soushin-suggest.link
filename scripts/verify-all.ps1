@@ -13,6 +13,7 @@ $probes = @(
     'verify-history-delete-persist.ps1'
     'verify-snippet-promote.ps1'
     'verify-clip-transform.ps1'
+    'verify-ui-snapshot.ps1'
 )
 
 foreach ($probe in $probes) {
