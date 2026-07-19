@@ -10,6 +10,7 @@ $probes = @(
     'verify-clibor-import.ps1'
     'verify-diagnostics.ps1'
     'verify-history-persist.ps1'
+    'verify-history-delete-persist.ps1'
     'verify-snippet-promote.ps1'
 )
 
