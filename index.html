@@ -1454,6 +1454,60 @@ footer { padding: 32px 0 48px; }
   cursor: pointer;
 }
 .thx-replay:hover { border-color: var(--accent); }
+
+/* quick-paste launcher demo — launcher-specific parts are namespaced .qp-,
+   identical-looking parts (.thx-cursor / ring / toast / hud / payoff / replay)
+   are reused as pure CSS classes. */
+.qp-stage { margin: 22px 0 26px; }
+.qp-screen { position: relative; min-height: 300px; }
+.qp-app {
+  position: relative; background: var(--panel-soft);
+  border: 1.5px solid var(--line); border-radius: 12px;
+  padding: 14px; min-height: 280px; overflow: hidden;
+}
+.qp-msg {
+  background: var(--panel); border-radius: 10px; padding: 10px 12px;
+  font-size: 12px; line-height: 1.55; margin-bottom: 10px; max-width: 78%;
+}
+.qp-input { margin-top: 120px; }   /* ポップアップの居場所を空ける */
+.qp-popup {
+  position: absolute; left: 10%; top: 60px; width: min(320px, 82%);
+  background: var(--panel); border: 1.5px solid var(--accent);
+  border-radius: 12px; box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
+  z-index: 4; opacity: 0; pointer-events: none;
+  transform: scale(0.94) translateY(6px); transform-origin: 20% 0%;
+  transition: opacity 0.25s ease, transform 0.25s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+.qp-popup.is-open { opacity: 1; transform: scale(1) translateY(0); }
+.qp-popup-bar { font-size: 10.5px; font-weight: 800; color: var(--muted); padding: 8px 12px 0; font-family: ui-monospace, monospace; }
+.qp-tabs { display: flex; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+.qp-tab { font-size: 11px; font-weight: 800; color: var(--muted); padding: 3px 10px; border-radius: 999px; }
+.qp-tab.is-active { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+.qp-list { list-style: none; margin: 0; padding: 6px; }
+.qp-list li {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11.5px; line-height: 1.4; padding: 6px 8px; border-radius: 8px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: background 0.2s ease;
+}
+.qp-list li:nth-child(even) { background: var(--panel-soft); }  /* 実物の縞模様を再現 */
+.qp-list li .num {
+  flex-shrink: 0; width: 16px; height: 16px; border-radius: 4px;
+  background: var(--panel-soft); border: 1px solid var(--line);
+  font-size: 10px; font-weight: 800; color: var(--muted);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.qp-list li.is-hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.qp-list li.is-selected { background: color-mix(in srgb, var(--accent) 26%, transparent); }
+.qp-list li.is-promoted { background: color-mix(in srgb, var(--ok) 16%, transparent); }
+.qp-list li.is-promoted .num { border-color: var(--ok); color: var(--ok); }
+/* カーソルは transform(自要素基準%)ではなく left/top(親%)で配置する — 理由はJS内コメント参照 */
+.qp-cursor { transition: left 0.9s cubic-bezier(0.4, 0, 0.2, 1), top 0.9s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.25s ease; }
+.qp-note { font-size: 11px; color: var(--muted); text-align: center; margin: 10px 0 0; }
+@media (max-width: 620px) {
+  .qp-popup { left: 5%; width: 90%; }
+  .qp-msg { max-width: 100%; }
+}
 </style>
 </head>
 <body>
@@ -2501,6 +2555,48 @@ footer { padding: 32px 0 48px; }
     <div class="clip-launcher">
       <h3>呼び出しは、いつものサイドボタン。長押しするだけ。</h3>
       <p>スクショを撮るあのサイドボタンを<strong>長押し</strong>すると、コピーした履歴と定型文の一覧「クイックペーストランチャー」がその場に開きます。<strong>クリックか、数字キー（1〜9、0で10番目）</strong>で選べば、その場で貼り付け。よく使う文面は、履歴を<strong>右クリック→「定型文に登録」</strong>で昇格させておけば、次からは番号ひとつで呼び出せます。</p>
+
+      <!-- quick-paste launcher live demo.
+           NOTE: 既存の SEE IT LIVE スクリプトは document.querySelector('.thx-stage') で
+           「文書順で最初の」ステージを取得する。このステージ(.qp-stage)は必ずそれより
+           後方に置くこと。JSはこの下の独立IIFEが .qp-stage 配下だけを触る。 -->
+      <div class="thx-stage qp-stage" data-qp-state="idle">
+        <div class="thx-phase-label qp-phase"></div>
+        <div class="qp-screen">
+          <div class="qp-app">
+            <div class="thx-app-bar">chat.example.com（デモ用の架空画面）</div>
+            <div class="qp-msg">明日の定例、時間って変わりましたっけ？</div>
+            <div class="thx-input qp-input" data-qp-placeholder="ここに返信を入力…">ここに返信を入力…</div>
+          </div>
+          <div class="qp-popup">
+            <div class="qp-popup-bar">クイックペースト</div>
+            <div class="qp-tabs"><span class="qp-tab is-active">履歴</span><span class="qp-tab">定型文</span></div>
+            <ol class="qp-list"></ol>
+          </div>
+          <div class="thx-cursor qp-cursor">
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path d="M4 2 L4 20 L8.5 16 L11.5 22.5 L14 21.3 L11 15 L18 15 Z" fill="#1e293b" stroke="#fff" stroke-width="1.2" stroke-linejoin="round"/>
+            </svg>
+            <svg class="thx-hold-ring" viewBox="0 0 34 34">
+              <circle class="track" cx="17" cy="17" r="14"/>
+              <circle class="fill" cx="17" cy="17" r="14"/>
+            </svg>
+          </div>
+          <div class="thx-toast qp-toast">貼り付けました</div>
+          <div class="thx-payoff qp-payoff">
+            <div class="thx-payoff-line" style="font-size:16px;">使った文面は、次から1番上。</div>
+            <div class="thx-payoff-num" style="font-size:20px;"><span class="from">探して選ぶ</span> → <span class="to">開いて「1」</span></div>
+            <div class="thx-payoff-note">※デモ用の架空データです。実際の履歴は外部に送信されません。</div>
+          </div>
+        </div>
+        <div class="thx-hud">
+          <div class="thx-hud-right qp-hud">🖱️ 右手 <span class="thx-mouse-flash qp-flash"></span></div>
+          <div class="thx-watch qp-watch">0.0<span>秒</span></div>
+        </div>
+        <button class="thx-replay qp-replay" type="button">↺ もう一度見る</button>
+        <p class="qp-note">※実際の呼び出しはマウスのサイドボタン長押し（または Ctrl+Win+V）。デモではカーソル上のリングで長押しを表しています。</p>
+      </div>
+
       <ul class="clip-launcher-list">
         <li>📂 履歴がファイルやフォルダのパスなら、貼り付けずに<strong>「開く」</strong>こともできます。「さっきコピーしたあのフォルダ」に、エクスプローラーを辿らず直行。</li>
         <li>👀 項目にマウスを乗せれば全文プレビュー。長い文面も、貼る前に中身を確かめられます。</li>
@@ -2536,6 +2632,204 @@ footer { padding: 32px 0 48px; }
     </div>
   </div>
 </section>
+
+<script>
+(function () {
+  var stage = document.querySelector('.qp-stage');
+  if (!stage) { return; }
+
+  var phase = stage.querySelector('.qp-phase');
+  var popup = stage.querySelector('.qp-popup');
+  var list = stage.querySelector('.qp-list');
+  var input = stage.querySelector('.qp-input');
+  var cursor = stage.querySelector('.qp-cursor');
+  var holdRing = cursor.querySelector('.thx-hold-ring');
+  var toast = stage.querySelector('.qp-toast');
+  var payoff = stage.querySelector('.qp-payoff');
+  var flash = stage.querySelector('.qp-flash');
+  var watch = stage.querySelector('.qp-watch');
+  var replayBtn = stage.querySelector('.qp-replay');
+
+  // 完全に架空のダミーデータ(実ユーザーデータ転用禁止)
+  var ITEMS = [
+    'https://example.com/meet/0000 （会議URL）',
+    'お疲れさまです。資料一式、添付にてお送りします。',
+    '【定例】明日は 10:00 開始に変更になりました。',
+    'C:\\Users\\demo\\Documents\\見本フォルダ',
+    '000-0000-0000 （サンプル）'
+  ];
+  var PICK = 2; // 幕1で選ぶ項目(0始まりで3番目)
+
+  function renderList(order, promotedText) {
+    list.innerHTML = '';
+    order.forEach(function (text, i) {
+      var li = document.createElement('li');
+      var num = document.createElement('span');
+      num.className = 'num';
+      num.textContent = String(i + 1);
+      li.appendChild(num);
+      li.appendChild(document.createTextNode(text));
+      if (text === promotedText) { li.classList.add('is-promoted'); }
+      list.appendChild(li);
+    });
+  }
+
+  // 既存 .thx-stage と同じ自前タイマー管理(完全ローカル・共有しない)
+  var timers = [];
+  function at(fn, delay) { var t = setTimeout(fn, delay); timers.push(t); return t; }
+  function clearAll() { timers.forEach(function (t) { clearTimeout(t); }); timers = []; }
+
+  // NOTE: 既存 setCursorAt は transform: translate(%) だが、translate% は
+  // カーソル自身(26px)基準なので長距離移動やリスト行の狙い撃ちには使えない。
+  // ここでは親(.qp-screen)基準の left/top % で置く(CSS側で left/top を transition)。
+  function cursorTo(xPct, yPct) {
+    cursor.classList.add('is-visible');
+    cursor.style.left = xPct + '%';
+    cursor.style.top = yPct + '%';
+  }
+
+  var watchInterval = null;
+  function startWatch() {
+    var startedAt = Date.now();
+    watch.classList.add('is-after');
+    watchInterval = setInterval(function () {
+      watch.textContent = ((Date.now() - startedAt) / 1000).toFixed(1);
+    }, 100);
+    timers.push(watchInterval);
+  }
+  function stopWatch() {
+    if (watchInterval) { clearInterval(watchInterval); watchInterval = null; }
+  }
+
+  function flashMouse(text) {
+    flash.textContent = text;
+    flash.classList.add('is-on');
+    at(function () { flash.classList.remove('is-on'); }, 600);
+  }
+
+  function resetVisuals() {
+    stopWatch();
+    renderList(ITEMS, null);
+    popup.classList.remove('is-open');
+    payoff.classList.remove('is-visible');
+    toast.classList.remove('is-visible');
+    cursor.classList.remove('is-visible');
+    holdRing.classList.remove('is-filling');
+    input.textContent = input.getAttribute('data-qp-placeholder');
+    input.classList.remove('has-text');
+    flash.classList.remove('is-on');
+    watch.textContent = '0.0';
+    watch.classList.remove('is-after');
+    phase.textContent = '';
+    phase.className = 'thx-phase-label qp-phase';
+  }
+
+  function rowY(index) { return 34 + index * 9.5; } // リスト行のおおよそのY%(実装時に微調整)
+
+  function play() {
+    clearAll();
+    resetVisuals();
+    stage.setAttribute('data-qp-state', 'playing');
+    var t0 = 0;
+    function seg(fn, delay) { t0 += delay; at(fn, t0); return t0; }
+
+    // ---- 幕1: 1回目(約5.2秒) ----
+    seg(function () {
+      phase.textContent = '🖱️ 1回目：履歴から探して貼る';
+      phase.classList.add('is-after');
+      startWatch();
+      cursorTo(48, 78); // 入力欄の上
+    }, 0);
+    seg(function () { holdRing.classList.add('is-filling'); flashMouse('サイドボタン長押し'); }, 700);
+    seg(function () { holdRing.classList.remove('is-filling'); popup.classList.add('is-open'); }, 1000);
+    seg(function () { cursorTo(30, rowY(PICK)); }, 500);
+    seg(function () { list.children[PICK].classList.add('is-hover'); }, 950);
+    seg(function () {
+      flashMouse('クリック');
+      list.children[PICK].classList.remove('is-hover');
+      list.children[PICK].classList.add('is-selected');
+    }, 400);
+    seg(function () {
+      popup.classList.remove('is-open');
+      input.textContent = ITEMS[PICK];
+      input.classList.add('has-text');
+      toast.classList.add('is-visible');
+    }, 350);
+    seg(function () { toast.classList.remove('is-visible'); }, 900);
+
+    // ---- 幕2: 2回目(約4秒) — さっき使った文が1番上に ----
+    seg(function () {
+      phase.textContent = '✨ 2回目：さっき使った文が、1番上に来ています';
+      input.textContent = input.getAttribute('data-qp-placeholder');
+      input.classList.remove('has-text');
+      // ポップアップが閉じている間に並びを昇格(実機の挙動を再現)
+      var promoted = [ITEMS[PICK]].concat(ITEMS.filter(function (_, i) { return i !== PICK; }));
+      renderList(promoted, ITEMS[PICK]);
+      cursorTo(48, 78);
+    }, 700);
+    seg(function () { holdRing.classList.add('is-filling'); flashMouse('サイドボタン長押し'); }, 600);
+    seg(function () { holdRing.classList.remove('is-filling'); popup.classList.add('is-open'); }, 1000);
+    seg(function () { flashMouse('数字キー 1'); list.children[0].classList.add('is-selected'); }, 900);
+    seg(function () {
+      popup.classList.remove('is-open');
+      input.textContent = ITEMS[PICK];
+      input.classList.add('has-text');
+      toast.classList.add('is-visible');
+    }, 400);
+
+    // ---- ペイオフ ----
+    seg(function () {
+      toast.classList.remove('is-visible');
+      cursor.classList.remove('is-visible');
+      stopWatch();
+      payoff.classList.add('is-visible');
+    }, 1000);
+  }
+
+  var reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function showStaticResult() {
+    resetVisuals();
+    var promoted = [ITEMS[PICK]].concat(ITEMS.filter(function (_, i) { return i !== PICK; }));
+    renderList(promoted, ITEMS[PICK]);
+    popup.classList.add('is-open');
+    input.textContent = ITEMS[PICK];
+    input.classList.add('has-text');
+    payoff.classList.add('is-visible');
+    phase.textContent = '履歴から選ぶと、使った文面が次から1番上に';
+  }
+
+  // rectベース自動再生(既存 .thx-stage と同方式・ただしフラグとリスナーは完全ローカル)
+  var played = false;
+  function inZone() {
+    var r = stage.getBoundingClientRect();
+    var vh = window.innerHeight || document.documentElement.clientHeight;
+    var mid = r.top + r.height / 2;
+    return mid > vh * 0.1 && mid < vh * 0.9;
+  }
+  var ticking = false;
+  function onScroll() {
+    if (ticking || played) { return; }
+    ticking = true;
+    setTimeout(function () {
+      ticking = false;
+      if (!played && inZone()) { played = true; play(); }
+    }, 50);
+  }
+
+  renderList(ITEMS, null); // 初期描画(JS無効/再生前でも骨格が見える)
+  if (reducedMotion) {
+    showStaticResult();
+  } else {
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll, { passive: true });
+    if (inZone()) { played = true; play(); }
+    // NOTE: 既存ステージにある「4秒後の無条件再生」はここでは意図的に入れない。
+    // このセクションはページ後半にあり、画面外で再生が終わる事故になるため。
+  }
+  replayBtn.addEventListener('click', play);
+})();
+</script>
 
 <section>
   <div class="wrap">
