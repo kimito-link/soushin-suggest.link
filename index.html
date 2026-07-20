@@ -1074,30 +1074,9 @@ p.lede { color: var(--muted); font-size: 14px; margin: 10px 0 0; max-width: 58ch
 .clip-uses { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 28px; }
 .clip-use-card { background: var(--panel-soft); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 16px; font-size: 12.5px; color: var(--muted); }
 .clip-use-card strong { display: block; color: var(--fg); font-size: 13px; margin-bottom: 6px; }
-/* ランチャー画面イメージ(サンプルデータ)。実アプリの実測色: 背景F0F6FF/縞DCE7F8/帯D4DCE8 */
-.launcher-mock-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px; }
-.launcher-mock { margin: 0; }
-.launcher-mock-frame { max-width: 460px; margin: 0 auto; background: #f0f6ff; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08); font-size: 12px; line-height: 1.5; color: #1e293b; }
-.launcher-mock .lm-titlebar { display: flex; align-items: center; gap: 6px; background: #d4dce8; color: #1a3e7a; font-size: 10px; font-weight: 700; padding: 3px 8px; }
-.launcher-mock .lm-titlebar .lm-ver { margin-left: auto; color: #64748b; font-weight: 400; }
-.launcher-mock .lm-titlebar .lm-gear { color: #64748b; }
-.launcher-mock .lm-tabs { display: flex; align-items: flex-end; gap: 2px; padding: 6px 8px 0; border-bottom: 1px solid #c9d6ea; }
-.launcher-mock .lm-tab { padding: 2px 10px; border: 1px solid #c9d6ea; border-bottom: none; border-radius: 6px 6px 0 0; background: #e2eaf6; color: #55607a; font-size: 11px; white-space: nowrap; }
-.launcher-mock .lm-tab.is-active { background: #f0f6ff; color: #0f172a; font-weight: 700; }
-.launcher-mock .lm-search { margin-left: auto; display: flex; align-items: center; gap: 4px; background: #fff; border: 1px solid #c9d6ea; border-radius: 4px; padding: 1px 8px 1px 6px; margin-bottom: 4px; color: #94a3b8; font-size: 10.5px; white-space: nowrap; overflow: hidden; }
-.launcher-mock .lm-list { list-style: none; margin: 0; padding: 0; }
-.launcher-mock .lm-row { display: flex; align-items: center; gap: 7px; padding: 5px 10px; background: #f0f6ff; white-space: nowrap; overflow: hidden; }
-.launcher-mock .lm-row:nth-child(even) { background: #dce7f8; }
-.launcher-mock .lm-key { flex-shrink: 0; min-width: 14px; font-family: ui-monospace, monospace; font-weight: 700; color: #1d4ed8; }
-.launcher-mock .lm-text { overflow: hidden; text-overflow: ellipsis; }
-.launcher-mock .lm-thumb { flex-shrink: 0; width: 30px; height: 22px; border-radius: 3px; border: 1px solid #b6c6de; background: linear-gradient(135deg, #dbeafe 0 55%, #bfdbfe 55%); display: flex; align-items: center; justify-content: center; font-size: 11px; }
-.launcher-mock .lm-note { text-align: center; font-size: 10px; color: #64748b; background: #e2eaf6; padding: 3px 8px; border-top: 1px dashed #c9d6ea; }
-.launcher-mock figcaption { font-size: 11.5px; color: var(--muted); text-align: center; margin-top: 8px; }
-.launcher-mock-disclaimer { font-size: 11px; color: var(--muted); text-align: center; margin: 10px 0 0; }
 @media (max-width: 620px) {
   .clip-row { grid-template-columns: 1fr; }
   .clip-uses { grid-template-columns: 1fr; }
-  .launcher-mock-row { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 620px) {
@@ -2531,49 +2510,6 @@ footer { padding: 32px 0 48px; }
       </ul>
       <div class="flow-alt"><span class="emoji">⌨️</span>キーボード派は Ctrl + Win + V でも同じランチャーを開けます。マウスから手を離さないための機能なので、覚えなくても困りません。</div>
     </div>
-    <div class="launcher-mock-row">
-      <figure class="launcher-mock">
-        <div class="launcher-mock-frame" role="img" aria-label="クイックペーストランチャー・履歴タブの画面イメージ（サンプルデータ）">
-          <div class="lm-titlebar"><span>君斗りんくの送信サジェスト</span><span class="lm-ver">v1.22.8</span><span class="lm-gear">⚙</span></div>
-          <div class="lm-tabs">
-            <span class="lm-tab is-active">履歴 132</span>
-            <span class="lm-tab">定型文 26</span>
-            <span class="lm-search">🔍 りんくがコピペ履歴を検索</span>
-          </div>
-          <ul class="lm-list">
-            <li class="lm-row"><span class="lm-key">1</span><span class="lm-thumb">📷</span><span class="lm-text">画像 1280×720 (0.8MB)</span></li>
-            <li class="lm-row"><span class="lm-key">2</span><span class="lm-text">お問い合わせありがとうございます。担当より本日中にご返信いたします。取り急ぎ受付のご…</span></li>
-            <li class="lm-row"><span class="lm-key">3</span><span class="lm-text">https://example.com/docs/quick-start</span></li>
-            <li class="lm-row"><span class="lm-key">4</span><span class="lm-text">C:\Users\you\Documents\見積書_サンプル商事_20260720.xlsx</span></li>
-            <li class="lm-row"><span class="lm-key">5</span><span class="lm-thumb">📷</span><span class="lm-text">画像 1920×1080 (2.1MB)</span></li>
-            <li class="lm-row"><span class="lm-key">6</span><span class="lm-text">〒000-0000 サンプル県サンプル市中央1-2-3 サンプルビル4F</span></li>
-          </ul>
-          <div class="lm-note">▲ 画面イメージ — 表示内容はすべて架空のサンプルです</div>
-        </div>
-        <figcaption>履歴タブ：文章もURLもパスも時系列で並び、スクショはサムネイル付き。数字キーで即貼り付け。</figcaption>
-      </figure>
-      <figure class="launcher-mock">
-        <div class="launcher-mock-frame" role="img" aria-label="クイックペーストランチャー・定型文タブの画面イメージ（サンプルデータ）">
-          <div class="lm-titlebar"><span>君斗りんくの送信サジェスト</span><span class="lm-ver">v1.22.8</span><span class="lm-gear">⚙</span></div>
-          <div class="lm-tabs">
-            <span class="lm-tab">履歴 132</span>
-            <span class="lm-tab is-active">定型文 26</span>
-            <span class="lm-search">🔍 りんくが定型文を検索</span>
-          </div>
-          <ul class="lm-list">
-            <li class="lm-row"><span class="lm-key">1</span><span class="lm-text">お問い合わせ受付のお礼</span></li>
-            <li class="lm-row"><span class="lm-key">2</span><span class="lm-text">見積送付のご案内</span></li>
-            <li class="lm-row"><span class="lm-key">3</span><span class="lm-text">日程調整のお願い（候補3つ提示）</span></li>
-            <li class="lm-row"><span class="lm-key">4</span><span class="lm-text">請求書送付のご案内</span></li>
-            <li class="lm-row"><span class="lm-key">5</span><span class="lm-text">会社署名（本社）</span></li>
-            <li class="lm-row"><span class="lm-key">6</span><span class="lm-text">リモート会議の招待文</span></li>
-          </ul>
-          <div class="lm-note">▲ 画面イメージ — 表示内容はすべて架空のサンプルです</div>
-        </div>
-        <figcaption>定型文タブ：よく使う文面に名前を付けて番号で呼び出し。一覧はラベルだけだから一目で選べます。</figcaption>
-      </figure>
-    </div>
-    <p class="launcher-mock-disclaimer">※実際の画面はWindowsネイティブ表示のため、フォントや細部の見た目は多少異なります。</p>
     <div class="clip-row">
       <div class="step-card">
         <h3>スクショの履歴は、文字じゃなくて絵で探す。</h3>
