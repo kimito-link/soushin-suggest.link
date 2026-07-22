@@ -23,7 +23,7 @@ if A_IsCompiled
 ;  対応アプリ・送信ルールは sites.ini、定型文は snippets.ini で編集できます（同梱）。
 ;  トレイのアイコンを右クリック -> Suspend Hotkeys / Exit
 
-global AppVersion := "1.23.2"
+global AppVersion := "1.23.3"
 global CopyOnSelect := true, dragX := 0, dragY := 0, dragT := 0
 global SitesConfig := Map()
 global SiteRules := []
@@ -1150,7 +1150,7 @@ ShowSnippetManager(*) {
         SnipMgrRefresh()               ; 外部編集(メモ帳/取込)を拾うため再表示時は必ず再読込
         SnipMgrHistRefresh()
         SnipMgrGui.Show(SnipMgrPositionArgs(600, 609))
-        SetTimer(SnipMgrWatchDrag, 30)
+        SetTimer(SnipMgrWatchDrag, 5)
         return
     }
     ; ランチャーと同じ「-Caption + 独自ドラッグバー」に統一(v1.16.0〜)。OS標準タイトルバーの
@@ -1237,7 +1237,7 @@ ShowSnippetManager(*) {
     SnipMgrRefresh()
     SnipMgrHistRefresh()
     SnipMgrGui.Show(SnipMgrPositionArgs(600, 609))
-    SetTimer(SnipMgrWatchDrag, 30)
+    SetTimer(SnipMgrWatchDrag, 5)
 }
 
 ; -Caption化に伴うドラッグバー移動監視。LauncherWatchDragと同じ実装パターン
@@ -1262,7 +1262,7 @@ SnipMgrWatchDrag() {
         try SnipMgrGui.Move(winX + (mx2 - startMx), winY + (my2 - startMy))
         catch
             return
-        Sleep 15
+        Sleep 5
     }
 }
 
@@ -1781,7 +1781,7 @@ ShowLauncher() {
     DiagCaptureUiSnapshot(LauncherGui, "launcher")   ; レイアウト確定後・表示直後の1回だけ(開発ビルド専用)
     ;@Ahk2Exe-IgnoreEnd
     SetTimer(CheckLauncherFocus, 150)
-    SetTimer(LauncherWatchDrag, 30)
+    SetTimer(LauncherWatchDrag, 5)
     LauncherHoverLast := "", SetTimer(LauncherWatchHover, 120)
 }
 
@@ -3100,6 +3100,12 @@ CloseLauncher() {
 
 ; 掴みしろ監視: バー領域内での左クリック押下を検知したら手動ドラッグループへ
 ; （その場での見やすい位置への移動はできるが、次回起動時はCliborと同じく常にカーソル位置に開き直す）
+; ポーリング間隔は30ms/Sleep15から5msに短縮(2026-07-22)。ノートPCの精密タッチパッドは
+; 「誤作動防止(AAP)」でキー入力直後のタップ/クリックを一時的に遅延させる既知の仕様があり、
+; またドラッグ中に単指移動がジェスチャー扱いへ再分類され得るため、ポーリングの粗さが
+; ボタン押下の開始・継続を取りこぼしやすい(デスクトップの通常マウスでは起きにくい)。
+; WM_NCHITTEST/WM_LBUTTONDOWNフックへの置き換えは実機で機能せず(-Captionウィンドウの
+; クライアント領域内コントロールでは非クライアント処理に委譲できない)撤回済み。
 LauncherWatchDrag() {
     global LauncherGui, LauncherDragBar
     if !(IsObject(LauncherGui) && IsObject(LauncherDragBar) && GetKeyState("LButton", "P"))
@@ -3117,7 +3123,7 @@ LauncherWatchDrag() {
         try LauncherGui.Move(winX + (mx2 - startMx), winY + (my2 - startMy))
         catch
             return   ; チェック直後にDestroyされた場合(単一スレッドのAHKでは稀だが念のため)
-        Sleep 15
+        Sleep 5
     }
 }
 
