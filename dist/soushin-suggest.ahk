@@ -70,7 +70,7 @@ WM_LBUTTONDOWN_ForDragBars(wParam, lParam, msg, hwnd) {
 ;  対応アプリ・送信ルールは sites.ini、定型文は snippets.ini で編集できます（同梱）。
 ;  トレイのアイコンを右クリック -> Suspend Hotkeys / Exit
 
-global AppVersion := "1.24.0"
+global AppVersion := "1.24.1"
 global CopyOnSelect := true, dragX := 0, dragY := 0, dragT := 0
 global SitesConfig := Map()
 global SiteRules := []
@@ -840,11 +840,44 @@ MButton::ActivateGitBash()
 ; ~LCtrl/~RCtrl up::は他のホットキーを妨げない(~)ため、Ctrl+C等の通常ショートカットは
 ; 従来通り動く。A_PriorKeyがCtrl自身でなければ「Ctrl+他のキー」の組み合わせ操作だったと
 ; 判定し、単押し(Ctrlだけを押して離した)のときだけランチャーを開く。
+; タップゲート・トグル閉じ追加(2026-07-23、会議→Fable設計・_docs/LAUNCHER-CTRL-TAP-POLISH-DESIGN.md)。
+; 左手だけで完結する起動を「磨く」方向で、新キーの追加はしない(過去にCtrl+Win+Vで一度
+; 実機衝突を踏んでいるため、新キー追加より既存キーの内側を狭める方が安全という判断)。
+global CtrlTapMs := 350        ; Ctrl単押し起動と見なす最大押下時間(ms)。長押しは「迷い押し」として無視
+global CtrlDownTick := 0
+
+~LCtrl::RecordCtrlDownForLauncher()
+~RCtrl::RecordCtrlDownForLauncher()
 ~LCtrl up::HandleCtrlUpForLauncher()
 ~RCtrl up::HandleCtrlUpForLauncher()
+
+RecordCtrlDownForLauncher() {
+    global CtrlDownTick
+    if (CtrlDownTick = 0)          ; キーリピートの2発目以降では上書きしない(修飾キーは押しっぱなしで再発火し続けるため)
+        CtrlDownTick := A_TickCount
+}
+
 HandleCtrlUpForLauncher() {
-    if (A_PriorKey = "LControl" || A_PriorKey = "RControl")
-        ShowLauncher()
+    global CtrlDownTick, CtrlTapMs, LauncherGui
+    held := (CtrlDownTick != 0) ? (A_TickCount - CtrlDownTick) : 0
+    CtrlDownTick := 0
+    if (A_PriorKey != "LControl" && A_PriorKey != "RControl")
+        return                     ; Ctrl+○の組み合わせ操作だった(従来どおりの判定・変更なし)
+    if (held > CtrlTapMs)
+        return                     ; 長押しは起動しない(押下時間が測れなかった場合はheld=0となり従来どおり開く方向に倒す)
+    if IsLauncherOpen() {          ; 開いている時のもう1タップは「閉じる」(Escに指を伸ばさなくていい)
+        CloseLauncher()
+        return
+    }
+    ShowLauncher()
+}
+
+IsLauncherOpen() {
+    global LauncherGui
+    if !IsObject(LauncherGui)
+        return false
+    try return WinExist("ahk_id " . LauncherGui.Hwnd) ? true : false
+    return false
 }
 
 ; --- サイドボタン(戻る): 押すとすぐクイックペースト（全アプリ・長押し判定なし） ---
