@@ -43,6 +43,7 @@ body {
   font-family: "Noto Sans JP", system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
   line-height: 1.75;
   overflow-x: hidden;
+  overscroll-behavior-y: contain;
   word-break: normal;
   overflow-wrap: break-word;
 }
@@ -550,89 +551,6 @@ p.lede { color: var(--muted); font-size: 14px; margin: 10px 0 0; max-width: 58ch
 .demo-window[data-scene="terminal"] .demo-input-box-terminal.has-text { color: #8ecf7a; border-color: var(--accent); }
 .demo-window[data-scene="terminal"] .demo-send-btn.is-armed { background: var(--accent); }
 
-/* screenshot-style windows — a pseudo desktop/terminal/notes app, a side-button
-   click, a flash, then the resulting thumbnail gets dragged into the next
-   window like any other paste. Reused across the error, review and notes scenes. */
-.demo-desktop {
-  position: relative;
-  background: linear-gradient(155deg, #dbeafe 0%, #eff6ff 55%, #f8fafc 100%);
-  border-radius: 12px;
-  padding: 22px;
-  min-height: 170px;
-  overflow: hidden;
-}
-.demo-desktop-window {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.1);
-  padding: 14px 16px;
-  max-width: 340px;
-}
-.demo-desktop-window .fake-titlebar { display: flex; gap: 6px; margin-bottom: 10px; }
-.demo-desktop-window .fake-titlebar span { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
-.demo-desktop-window .fake-line { height: 8px; border-radius: 4px; background: var(--line); margin-bottom: 8px; }
-.demo-desktop-window .fake-line:nth-child(2) { width: 80%; }
-.demo-desktop-window .fake-line:nth-child(3) { width: 55%; }
-.demo-desktop-window.is-terminal { background: #16181d; }
-.demo-desktop-window.is-terminal .fake-titlebar span { background: #37393d; }
-.demo-desktop-window.is-terminal .fake-line { background: #2a2c2f; }
-.demo-desktop-window.is-terminal .fake-error { color: #ff8a80; font-family: ui-monospace, monospace; font-size: 12px; margin-bottom: 6px; }
-.demo-desktop-window.is-notes .fake-line { background: #fde68a; }
-.demo-flash {
-  position: absolute;
-  inset: 0;
-  background: #fff;
-  opacity: 0;
-  pointer-events: none;
-  border-radius: 12px;
-}
-.demo-flash.is-flashing { animation: demoFlash 0.5s ease; }
-@keyframes demoFlash {
-  0% { opacity: 0; }
-  15% { opacity: 0.9; }
-  100% { opacity: 0; }
-}
-.demo-thumb {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 84px;
-  height: 60px;
-  background: var(--panel);
-  border: 2px solid var(--accent);
-  border-radius: 8px;
-  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.18);
-  opacity: 0;
-  pointer-events: none;
-  z-index: 6;
-  overflow: hidden;
-  transition: left 0.7s cubic-bezier(0.4, 0, 0.2, 1), top 0.7s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease, width 0.7s ease, height 0.7s ease;
-}
-.demo-thumb.is-visible { opacity: 1; }
-.demo-thumb .mini {
-  transform: scale(0.26);
-  transform-origin: top left;
-  width: 320px;
-  pointer-events: none;
-}
-.demo-thumb.is-landed { width: 26px; height: 20px; border-radius: 5px; }
-
-/* scene switcher tabs above the demo stage */
-.demo-scene-tabs { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
-.demo-scene-tab {
-  border: 1px solid var(--line);
-  background: var(--panel-soft);
-  color: var(--muted);
-  border-radius: 999px;
-  padding: 7px 14px;
-  font-size: 12px;
-  font-weight: 800;
-  cursor: pointer;
-}
-.demo-scene-tab.is-active { background: var(--accent); border-color: var(--accent); color: #fff; }
-.demo-stage { display: none; }
-.demo-stage.is-active { display: block; }
 
 /* scroll-driven before/after story — replaces the old auto-playing tab demo.
    Two columns (before = left hand busy, after = right hand only), each a
