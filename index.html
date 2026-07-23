@@ -242,6 +242,16 @@ h1 .strike { text-decoration: line-through; text-decoration-color: var(--muted);
   .demo-arrow { transform: rotate(90deg); margin: -4px 0; }
 }
 
+@media (prefers-reduced-motion: no-preference) {
+  .demo-step:nth-child(1) .demo-step-icon { animation: demoStepPulse 6s ease-in-out infinite; animation-delay: 0s; --demo-glow: #7c3aed; }
+  .demo-step:nth-child(3) .demo-step-icon { animation: demoStepPulse 6s ease-in-out infinite; animation-delay: 2s; --demo-glow: var(--ok); }
+  .demo-step:nth-child(5) .demo-step-icon { animation: demoStepPulse 6s ease-in-out infinite; animation-delay: 4s; --demo-glow: var(--accent); }
+}
+@keyframes demoStepPulse {
+  0%, 16.66%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--demo-glow) 0%, transparent); transform: scale(1); }
+  8.33% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--demo-glow) 45%, transparent); transform: scale(1.08); }
+}
+
 @media (max-width: 780px) {
   .hero-grid { grid-template-columns: 1fr; }
   .hero-trio { height: 170px; order: -1; margin-bottom: 8px; }
