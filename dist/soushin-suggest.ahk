@@ -846,7 +846,11 @@ HandleCtrlUpForLauncher() {
 }
 
 ; --- サイドボタン(戻る): 押すとすぐクイックペースト（全アプリ・長押し判定なし） ---
-XButton1::ShowLauncher()
+; *プレフィックス(2026-07-23〜): 修飾キー(Ctrl/Shift等)が押された状態でも発火するようにする。
+; SendやG HUB等の影響で修飾キーの論理状態がスタックすると、無印ホットキーは沈黙したままに
+; なりうる(公式ヘルプのHotkeys.htm参照)。XButton1に修飾キー付きの競合ホットキーは無いため
+; 安全に追加できる(XButton2は長押し判定があるため対象外)。会議→Fable設計(3段構え)で決定。
+*XButton1::ShowLauncher()
 
 ; --- サイドボタン(進む): 短押し=カーソルのモニタを全画面スクショ / 長押し=範囲指定スクショ ---
 XButton2:: {
@@ -3575,6 +3579,11 @@ A_TrayMenu.Add()  ; セパレータ
 A_TrayMenu.Add("設定フォルダを開く", (*) => Run('explorer.exe "' . A_ScriptDir . '"'))
 A_TrayMenu.Add("診断情報をコピー", CopyDiagnostics)   ; AIチャットに貼るための計器ダンプ(履歴本文は含まない)
 A_TrayMenu.Add("診断ページで見る", ShowDiagnosticPage)   ; 診断情報を送信してshindan/を自動で開く(2026-07-18〜)
+; マウスのサイドボタンが反応しなくなった際の手動修復(2026-07-23〜)。他プロセス(マウス管理ソフト等)が
+; 後からマウスフックを割り込ませて優先を奪ったり、OS側がフックを黙って切り離すことがあり、
+; InstallMouseHook(true,true)で「一度外して入れ直す」と復旧することがある(公式ヘルプ記載の挙動)。
+; 管理者権限・再起動・アプリ再起動いずれも不要。会議→Fable設計(3段構え)で決定。
+A_TrayMenu.Add("サイドボタンを修復", (*) => (InstallMouseHook(true, true), TrayTip("サイドボタンを修復しました", "送信サジェスト")))
 A_TrayMenu.Add()  ; セパレータ
 A_TrayMenu.Add("v" . AppVersion, (*) => 0), A_TrayMenu.Disable("v" . AppVersion)
 A_TrayMenu.Add()  ; セパレータ
