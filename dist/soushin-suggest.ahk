@@ -64,11 +64,13 @@ WM_LBUTTONDOWN_ForDragBars(wParam, lParam, msg, hwnd) {
 ;  サイドボタン(進む)      -> 短押し=全画面スクショ / 長押し=範囲指定スクショ
 ;  ミドルクリック           -> Git Bash を前面へ（無ければ起動）
 ;  Ctrl+Win+C              -> なぞってコピーのON/OFF切り替え
-;  Ctrl+Win+V              -> クイックペーストを開く（マウスなしでも呼び出せる）
+;  Ctrl（押して離すだけ）  -> クイックペーストを開く（マウスなしでも呼び出せる）
+;  サイドボタンが無い場合  -> Ctrlを押して離すとランチャーが開き、中の「画面を撮る」
+;                             「範囲を撮る」ボタンでスクショも撮れる
 ;  対応アプリ・送信ルールは sites.ini、定型文は snippets.ini で編集できます（同梱）。
 ;  トレイのアイコンを右クリック -> Suspend Hotkeys / Exit
 
-global AppVersion := "1.23.3"
+global AppVersion := "1.24.0"
 global CopyOnSelect := true, dragX := 0, dragY := 0, dragT := 0
 global SitesConfig := Map()
 global SiteRules := []
@@ -854,16 +856,29 @@ HandleCtrlUpForLauncher() {
 
 ; --- サイドボタン(進む): 短押し=カーソルのモニタを全画面スクショ / 長押し=範囲指定スクショ ---
 XButton2:: {
-    global LongPressSec, LastUserCopyTick
+    global LongPressSec
     if KeyWait("XButton2", "T" . LongPressSec) {
-        LastUserCopyTick := A_TickCount        ; 自スクリプト発のSendはフックに乗らないため明示記録
-        if !CaptureMonitorAtCursorToClipboard()
-            Send("#{PrintScreen}")             ; 自前キャプチャ失敗時は従来のWin+PrintScreenへフォールバック
+        DoFullScreenShot()
         return
     }
     KeyWait("XButton2")
-    LastUserCopyTick := A_TickCount            ; Win+Shift+Sのクリップボードコピーもユーザー操作として認める
-    Send("#+s")                                ; Windows標準の切り取り&スケッチ(範囲指定)
+    DoRegionSnip()
+}
+
+; サイドボタン無しユーザー向けにランチャーのボタンからも同じ処理を呼べるよう関数化(2026-07-23〜)。
+; LastUserCopyTickの記録とフォールバックを丸ごとここに集約する。片方だけ更新する二重管理にすると
+; クリップボード検疫フィルタに弾かれ「撮れたのに履歴に載らない」バグになるため、呼び出し元を
+; 増やしてもこの関数だけが唯一の実体であり続けること。
+DoFullScreenShot() {
+    global LastUserCopyTick
+    LastUserCopyTick := A_TickCount        ; 自スクリプト発のSendはフックに乗らないため明示記録
+    if !CaptureMonitorAtCursorToClipboard()
+        Send("#{PrintScreen}")             ; 自前キャプチャ失敗時は従来のWin+PrintScreenへフォールバック
+}
+DoRegionSnip() {
+    global LastUserCopyTick
+    LastUserCopyTick := A_TickCount        ; Win+Shift+Sのクリップボードコピーもユーザー操作として認める
+    Send("#+s")                            ; Windows標準の切り取り&スケッチ(範囲指定)
 }
 
 ; PrintScreen(全画面/Alt+PrintScreenでアクティブウィンドウ)によるコピーもユーザー操作として認める
@@ -1788,6 +1803,28 @@ ShowLauncher() {
     logoW := 73, logoH := 55, footerH := logoH + 8
     try LauncherGui.Add("Picture", "x" . (tabX + (tabW - logoW) // 2) . " y" . (footerY + 4) . " w" . logoW . " h-1",
         A_ScriptDir . "\kimitolink-full-logo-73.png")
+    ; サイドボタン無しユーザー向けスクショボタン(2026-07-23〜・_docs/LAUNCHER-SCREENSHOT-BUTTONS-DESIGN.md)。
+    ; 「ショートカットキーを一つも覚えなくていい」というLPの核心コピーは、サイドボタン無しの人には
+    ; 従来Win+Shift+Sを案内するほかなく矛盾していた(しかも独自の全画面即キャプチャの代替にもならない)。
+    ; 新規ホットキーは追加せず、Ctrl単押しで開く既存のランチャーに導線を足すだけで解決する。
+    ; クリックしたら必ずCloseLauncher()→Sleep(150)→撮影の順を守ること(順序を崩すとランチャー自身が
+    ; 写り込む、または+AlwaysOnTop同士のZ-order競合で白化する。CaptureMonitorAtCursorToClipboard内コメント参照)。
+    ; ボタンにキャラクターアイコンを添える(2026-07-23〜、ユーザー指定): 全画面=こん太(即実行役)、
+    ; 範囲指定=たぬ姉(慎重に見極める役)。LPのMEET THE TRIOで既に定着している役割分担に合わせた。
+    ; 絵文字(📷/✂️)はButtonの既定フォントで□(notdefグリフ)化する実機不具合が出たため、
+    ; キャラクター画像(kimito-link/src/images/yukkuri-charactore-english由来、24x24にリサイズ済み)
+    ; をButtonの左どなりに小さく添える構成にする。
+    btnW := 130, btnH := 28, iconSize := 24
+    btnY := footerY + (footerH - btnH) // 2
+    iconY := footerY + (footerH - iconSize) // 2
+    try LauncherGui.Add("Picture", "x" . tabX . " y" . iconY . " w" . iconSize . " h" . iconSize,
+        A_ScriptDir . "\konta-24.png")
+    LauncherGui.Add("Button", "x" . (tabX + iconSize + 4) . " y" . btnY . " w" . btnW . " h" . btnH, "画面を撮る")
+        .OnEvent("Click", (*) => (CloseLauncher(), Sleep(150), DoFullScreenShot()))
+    LauncherGui.Add("Button", "x" . (tabX + tabW - iconSize - 4 - btnW) . " y" . btnY . " w" . btnW . " h" . btnH, "範囲を撮る")
+        .OnEvent("Click", (*) => (CloseLauncher(), Sleep(150), DoRegionSnip()))
+    try LauncherGui.Add("Picture", "x" . (tabX + tabW - iconSize) . " y" . iconY . " w" . iconSize . " h" . iconSize,
+        A_ScriptDir . "\tanunee-24.png")
     LauncherGui.Add("Text", "x0 y" . footerY . " w1 h" . footerH)   ; フッター帯の高さをウィンドウ計算に含めるための透明スペーサ
     LauncherGui.OnEvent("Escape", (*) => CloseLauncher())
     LauncherGui.OnEvent("ContextMenu", LauncherContextMenu)
