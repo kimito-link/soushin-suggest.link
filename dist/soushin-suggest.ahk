@@ -1,6 +1,21 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
+; DPI対応の宣言(2026-07-23)。これが無いとWindowsが未対応アプリとみなしてビットマップ拡大
+; 表示するため、高DPI環境(このノートPCは150%スケーリング)でUI全体がぼやけて実際の指定
+; サイズより大きく見える(実機確認済み)。GUIを1つも作る前、できるだけ早い段階で宣言する
+; 必要がある。Per-Monitor-V2はモニタごとにスケール比が違う環境でも、ウィンドウが別モニタへ
+; 移動するたびに正しく再描画されるため、cursor追従で複数モニタをまたぐ本アプリと相性が良い。
+try DllCall("SetProcessDpiAwarenessContext", "Ptr", -4, "Int")   ; -4 = DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
 CoordMode "Mouse", "Screen"
+; プロセス起動時に上のSetProcessDpiAwarenessContextを1回呼ぶだけでは足りない。AHKはホットキー/
+; タイマーごとに疑似スレッドを生成しており、その疑似スレッド実行中にDPI awarenessが既定(システム
+; 認識)へ揺れ戻ることがあるため(ランチャーの表示位置が「なんとなく安定しない」実機報告、2026-07-23。
+; AutoHotkeyコミュニティのPer-Monitor DPI awarenessスレッド、Descolada/AHK-v2-librariesのDPI.ahk
+; でも同じ対処が取られている)。MouseGetPos/GetPos/Move等、座標を読み書きする関数の直前で毎回
+; スレッド単位のDPIコンテキストを設定し直すことで、揺れ戻りの影響を受けないようにする。
+EnsureDpiAware() {
+    try DllCall("SetThreadDpiAwarenessContext", "Ptr", -4, "Ptr")
+}
 ; コンパイル後もWindows 10/11のトースト通知はAutoHotkey本体のAUMID("AutoHotkey.AutoHotkey")に
 ; 紐づく既定アイコン(緑のH)を出す。自前のAUMIDを明示登録することで通知側にも自分のアイデンティティを持たせる。
 DllCall("shell32\SetCurrentProcessExplicitAppUserModelID", "wstr", "KimitoLink.SoushinSuggest")
@@ -21,15 +36,21 @@ if A_IsCompiled
 ; 判別してから、親のhwndへPostMessageする。
 OnMessage(0x201, WM_LBUTTONDOWN_ForDragBars)   ; 0x201 = WM_LBUTTONDOWN
 WM_LBUTTONDOWN_ForDragBars(wParam, lParam, msg, hwnd) {
-    global LauncherGui, LauncherDragBar
-    if (IsObject(LauncherGui) && IsObject(LauncherDragBar) && hwnd = LauncherDragBar.Hwnd) {
+    global LauncherGui, LauncherDragBar, SnipMgrGui, SnipMgrDragBar
+    targetGui := 0
+    if (IsObject(LauncherGui) && IsObject(LauncherDragBar) && hwnd = LauncherDragBar.Hwnd)
+        targetGui := LauncherGui
+    else if (IsObject(SnipMgrGui) && IsObject(SnipMgrDragBar) && hwnd = SnipMgrDragBar.Hwnd)
+        targetGui := SnipMgrGui
+    if targetGui {
+        EnsureDpiAware()   ; 揺れ戻り対策(スクリプト冒頭のコメント参照)。OnMessage経由の呼び出しは別の疑似スレッドになりうる
         DllCall("ReleaseCapture")
         ; lParamに実カーソル座標(スクリーン座標。CoordMode Mouse,Screen前提)を渡す。
         ; 0のままだと「掴んだ位置は画面(0,0)」とOSに伝わり、実カーソル位置に合わせる
         ; 一度きりの補正ジャンプ(押した瞬間だけガクッと動く)が発生する(2026-07-23実機報告)。
         MouseGetPos(&mx, &my)
         ncLParam := (my << 16) | (mx & 0xFFFF)
-        PostMessage(0xA1, 2, ncLParam, , "ahk_id " . LauncherGui.Hwnd)   ; 0xA1=WM_NCLBUTTONDOWN, 2=HTCAPTION (第4引数Controlは空にする。0を渡すと「コントロール0」を探しに行き Target window not found になる)
+        PostMessage(0xA1, 2, ncLParam, , "ahk_id " . targetGui.Hwnd)   ; 0xA1=WM_NCLBUTTONDOWN, 2=HTCAPTION (第4引数Controlは空にする。0を渡すと「コントロール0」を探しに行き Target window not found になる)
     }
 }
 ; ============================================================
@@ -1152,38 +1173,30 @@ global SnipMgrDragBar := 0                    ; -Caption化に伴う自前ドラ
 global SnipMgrTab := 0, SnipMgrHistLV := 0, SnipMgrHistEd := 0, SnipMgrHistPrev := 0
 global SnipMgrHistCount := 0, SnipMgrHistRows := [], SnipMgrHistNote := 0
 
-; ランチャーが開いていればその右隣(画面からはみ出るなら左隣)に、無ければ画面上の固定位置に開く。
-; ランチャーの真上に重なって隠すのを避けるため(SettingsGuiと同じフォーカス監視停止も併せて必要)。
-SnipMgrPositionArgs(w, h) {
-    global LauncherGui
-    if !IsObject(LauncherGui)
-        return "w" . w . " h" . h . " xCenter yCenter"
-    LauncherGui.GetPos(&lx, &ly, &lw, &lh)
-    mr := MonitorRectAtCursor()
-    gap := 12
-    x := lx + lw + gap
-    if (mr && x + w > mr.r)
-        x := lx - w - gap                 ; 右にはみ出るなら左隣にフォールバック
-    y := ly
-    return "w" . w . " h" . h . " x" . x . " y" . y
-}
+; 「ランチャーの隣に配置する」方式は、実ピクセル座標の計算自体は正しくても実機で被って見える
+; 事象が繰り返し報告され(2026-07-23)、原因を確定させられなかった。定型文の管理・設定は
+; ランチャーと同時に操作するものではない(開いている間はクイックペースト操作をしない)ため、
+; 開く直前にランチャーを閉じてしまい、そもそも「隣に避けて配置する」計算自体を無くす方針に
+; 変更(ユーザー合意済み)。位置は"xCenter yCenter"というAHK組み込みの特別指定に任せる
+; (実ピクセル/論理ピクセルの手計算をしないため、今夜ずっと踏んだscale絡みの地雷を踏みようがない)。
 
 ShowSnippetManager(*) {
     global SnipMgrGui, SnipMgrLV, SnipMgrLabelEd, SnipMgrBodyEd, SnipMgrStatus, SnipMgrClearChk
     global SnipMgrTab, SnipMgrHistLV, SnipMgrHistEd, SnipMgrHistPrev, SnipMgrHistCount, LauncherGui, SnipMgrDragBar
     global SnipMgrHistNote, SnipMgrGroupDD, SnipMgrSearchEd
+    EnsureDpiAware()   ; 構築(Gui()・Add群)より前に明示する必要がある(ShowLauncherと同じ理由、上のコメント参照)
+    CloseLauncher()   ; ランチャーと同時に使うものではないため閉じてしまう(隣に避けて配置する計算自体を無くす、2026-07-23)
     ; ランチャーのフォーカス監視を止める(設定ウィンドウと同じ地雷: フォーカスが移った瞬間に誤クローズする)
     SetTimer(CheckLauncherFocus, 0)
     if SnipMgrGui {
         SnipMgrRefresh()               ; 外部編集(メモ帳/取込)を拾うため再表示時は必ず再読込
         SnipMgrHistRefresh()
-        SnipMgrGui.Show(SnipMgrPositionArgs(600, 609))
-        SetTimer(SnipMgrWatchDrag, 5)
+        SnipMgrGui.Show("w600 h609 xCenter yCenter")
         return
     }
     ; ランチャーと同じ「-Caption + 独自ドラッグバー」に統一(v1.16.0〜)。OS標準タイトルバーの
-    ; 代わりに色付きバーでタイトルを出し、ドラッグ移動はSnipMgrWatchDragで自前実装する
-    ; (LauncherWatchDragと同じ「Destroy後アクセス防止」パターンを踏襲。実クラッシュ既知の地雷)。
+    ; 代わりに色付きバーでタイトルを出し、ドラッグ移動はWM_LBUTTONDOWN_ForDragBars(スクリプト
+    ; 冒頭・ランチャーと共通)がOSネイティブのウィンドウ移動に委譲する(2026-07-23)。
     SnipMgrGui := Gui("-Caption +ToolWindow")
     SnipMgrGui.SetFont("s9", "Meiryo UI")
     SnipMgrDragBar := SnipMgrGui.Add("Text", "x0 y0 w580 h18 BackgroundD4DCE8 c1A3E7A +0x100", "  定型文の管理")
@@ -1264,40 +1277,16 @@ ShowSnippetManager(*) {
     SnipMgrGui.OnEvent("Escape", (*) => HideSnipMgr())
     SnipMgrRefresh()
     SnipMgrHistRefresh()
-    SnipMgrGui.Show(SnipMgrPositionArgs(600, 609))
-    SetTimer(SnipMgrWatchDrag, 5)
+    SnipMgrGui.Show("w600 h609 xCenter yCenter")
 }
 
-; -Caption化に伴うドラッグバー移動監視。LauncherWatchDragと同じ実装パターン
-; (Destroy後アクセス防止のtry/catch含む。既知の地雷 feedback_ahk_drag_race_condition と同型)。
-SnipMgrWatchDrag() {
-    global SnipMgrGui, SnipMgrDragBar
-    if !(IsObject(SnipMgrGui) && IsObject(SnipMgrDragBar) && GetKeyState("LButton", "P")) {
-        if !IsObject(SnipMgrGui)
-            SetTimer(SnipMgrWatchDrag, 0)   ; ウィンドウ自体が無くなったらタイマーも止める
-        return
-    }
-    MouseGetPos &mx, &my
-    SnipMgrDragBar.GetPos(&bx, &by, &bw, &bh)
-    SnipMgrGui.GetPos(&gx, &gy)
-    if !(mx >= gx + bx && mx <= gx + bx + bw && my >= gy + by && my <= gy + by + bh)
-        return
-    winX := gx, winY := gy, startMx := mx, startMy := my
-    while GetKeyState("LButton", "P") {
-        if !IsObject(SnipMgrGui)
-            return
-        MouseGetPos &mx2, &my2
-        try SnipMgrGui.Move(winX + (mx2 - startMx), winY + (my2 - startMy))
-        catch
-            return
-        Sleep 5
-    }
-}
+; 掴みしろのドラッグ処理はWM_LBUTTONDOWN_ForDragBars(スクリプト冒頭)がOSのネイティブ
+; ウィンドウ移動(WM_NCLBUTTONDOWN)に委譲するため、ここでの独自ポーリングは撤去(2026-07-23、
+; ランチャーと同じ理由: タッチパッドで掴めない/逃げる不具合の解消)。
 
 ; 定型文の管理ウィンドウを閉じ、止めていたランチャーのフォーカス監視を再開する(HideSettingsWindowと同じ流儀)。
 HideSnipMgr() {
     global SnipMgrGui, LauncherGui
-    SetTimer(SnipMgrWatchDrag, 0)
     SnipMgrGui.Hide()
     if IsObject(LauncherGui)
         SetTimer(CheckLauncherFocus, 150)
@@ -1685,6 +1674,10 @@ LauncherTabChanged(tab, *) {
 
 ShowLauncher() {
     global ClipHistory, LauncherGui, LauncherTarget, Snippets, LauncherTab, LauncherDragBar, LauncherLvH, LauncherLvS, LauncherHoverLast, ClipWatchOn, AppVersion, LauncherSearchEdit, LauncherHistFilterMap, LauncherSnipFilterMap, LauncherLvHHwnd, LauncherLvSHwnd, LauncherPositionMode
+    ; ウィンドウ構築(Gui()・Add群)がEnsureDpiAware()より前に走ると、その回のDPIコンテキストが
+    ; 揺れ戻っている場合に実際の描画サイズが位置計算の想定とズレる(2026-07-23、設定ウィンドウの
+    ; 重なり・ランチャー位置不安定の実機報告を受けた調査で判明)。関数の一番最初で明示しておく。
+    EnsureDpiAware()
     Snippets := LoadSnippets()                ; 開くたびに読む: iniを編集→次の長押しで即反映
     if (ClipHistory.Length = 0 && Snippets.Length = 0) {
         Flash("履歴がありません（コピーすると貯まります）", 1800)
@@ -1712,12 +1705,18 @@ ShowLauncher() {
     ; (検索)」を1本の操作ヘッダーとして同列に扱う。会議で「検索を最優先で最上部に」という
     ; 案も出たが、実使用ではタブ切替(定型文か履歴か)が先行するため却下(設計書F節参照)。
     LauncherGui.SetFont("s12", "Meiryo UI")
-    LauncherDragBar := LauncherGui.Add("Text", "x0 y0 w376 h16 BackgroundD4DCE8 c1A3E7A +0x100", "  君斗りんくの送信サジェスト")  ; SS_NOTIFY相当をv2既定に加え、押下を明示検知
+    LauncherDragBar := LauncherGui.Add("Text", "x0 y0 w350 h16 BackgroundD4DCE8 c1A3E7A +0x100", "  君斗りんくの送信サジェスト")  ; SS_NOTIFY相当をv2既定に加え、押下を明示検知
     LauncherDragBar.SetFont("s8")
-    LauncherGui.Add("Text", "x376 y2 w58 h12 BackgroundD4DCE8 cGray Right", "v" . AppVersion).SetFont("s8")   ; バージョンもシステム帯に統一(旧: 帯の外に浮いていた)
-    gearBtn := LauncherGui.Add("Text", "x434 y0 w26 h16 BackgroundD4DCE8 cGray Center +0x100", "⚙")
+    LauncherGui.Add("Text", "x350 y2 w58 h12 BackgroundD4DCE8 cGray Right", "v" . AppVersion).SetFont("s8")   ; バージョンもシステム帯に統一(旧: 帯の外に浮いていた)
+    gearBtn := LauncherGui.Add("Text", "x408 y0 w26 h16 BackgroundD4DCE8 cGray Center +0x100", "⚙")
     gearBtn.SetFont("s10")
     gearBtn.OnEvent("Click", ShowLauncherSettingsMenu)
+    ; 閉じるボタン(2026-07-23、ユーザー指摘: 閉じる手段が見た目に無い)。-Captionウィンドウなので
+    ; OS標準の×は無く、定型文の管理と同じ「ドラッグバー右端のText+Click」パターンで自前実装する。
+    ; Escapeキーでも閉じられる(下のOnEvent("Escape",...))ことは変更しない。
+    launcherCloseBtn := LauncherGui.Add("Text", "x434 y0 w26 h16 BackgroundD4DCE8 cGray Center +0x100", "×")
+    launcherCloseBtn.SetFont("s11")
+    launcherCloseBtn.OnEvent("Click", (*) => CloseLauncher())
     LauncherGui.SetFont("s12")
     LauncherTab := LauncherGui.Add("Tab3", "x0 y16 w460 -Wrap",
         ["履歴 " . ClipHistory.Length, "定型文 " . Snippets.Length])
@@ -1800,6 +1799,7 @@ ShowLauncher() {
     ; Showしてから実測し、正しい位置へ一度だけMoveする」方式(2026-07-23)なら、ユーザーの目には
     ; 常に最終位置でしか映らない(画面外は見えないため)ので、近似ズレによる補正ジャンプも出ない
     ; (この一度きりMove方式はcursor/centerどちらの表示位置モードでも共通で使う)。
+    EnsureDpiAware()   ; 揺れ戻り対策(スクリプト冒頭のコメント参照)。この後のShow/GetPos/Move/MouseGetPos全てに効かせる
     launcherW := 460
     LauncherGui.Show("w" . launcherW . " x-32000 y-32000")   ; 画面外に実測用に一度表示(誰にも見えない)
     LauncherGui.GetPos(, , , &launcherH0)
@@ -1833,7 +1833,11 @@ ShowLauncher() {
             launcherX := curX + 12, launcherY := curY + 12
         }
     }
-    LauncherGui.Move(launcherX, launcherY)   ; ここで初めて画面内の最終位置へ(常にこの1回だけ)
+    ; Move()/Show()のx/yは論理(96DPI)座標として扱われ、実際の配置時にOS側でscale倍される既知の癖
+    ; がある(MonitorRectAtCursor()のコメント参照)。実ピクセルで計算したlauncherX/Yをそのまま渡すと
+    ; scale倍の位置にずれるため、渡す直前にscaleで割り戻す(実機ログで正確に機能することを確認済み)。
+    scale := (mr && mr.scale) ? mr.scale : 1
+    LauncherGui.Move(launcherX / scale, launcherY / scale)   ; ここで初めて画面内の最終位置へ(常にこの1回だけ)
     WinActivate("ahk_id " . LauncherGui.Hwnd)
     LauncherSearchEdit.Focus()   ; 検索EditはTab3の後に追加され既定フォーカスにならないため明示要求(出現直後に即タイプで絞り込めるように)
     DiagSchedulePaintProbe()   ; 描画実測プローブ(_docs/SHINDAN-PAINT-PROBE-DESIGN.md)
@@ -2207,6 +2211,7 @@ PasteImage(dib) {
 ; MonitorFromPointはPOINT構造体(x,yの8バイト)を1つの値として渡す必要がある。
 ; MONITOR_DEFAULTTONEAREST(=2)により、境界値でも必ずどこかのモニタを返す(fail-safe)。
 MonitorRectAtCursor() {
+    EnsureDpiAware()   ; 揺れ戻り対策(スクリプト冒頭のコメント参照)
     MouseGetPos(&mx, &my)
     pt := Buffer(8, 0)
     NumPut("Int", mx, pt, 0), NumPut("Int", my, pt, 4)
@@ -2219,7 +2224,14 @@ MonitorRectAtCursor() {
         return 0
     l := NumGet(mi, 4, "Int"), t := NumGet(mi, 8, "Int")   ; rcMonitor(offset 4-19)
     r := NumGet(mi, 12, "Int"), b := NumGet(mi, 16, "Int")
-    return {l: l, t: t, r: r, b: b, w: r - l, h: b - t}
+    ; スケール比も一緒に返す(2026-07-23)。実機ログで判明: MouseGetPos/GetMonitorInfoは実ピクセル座標を
+    ; 返すが、Gui.Move()/Show()の x/y はなぜか「論理(96DPI)座標」として扱われ、渡した値がOS側で
+    ; もう一度スケール倍される(150%環境で常に厳密に1.5倍の位置に着地することをログで確認済み)。
+    ; 揺れ戻り(EnsureDpiAware)とは別の、AutoHotkeyのGui座標系そのものの既知の癖。呼び出し側は
+    ; Move()/Show()の直前でこのscaleにより実ピクセル座標を割り戻す必要がある。
+    dpiX := 96, dpiY := 96
+    DllCall("Shcore.dll\GetDpiForMonitor", "Ptr", hMon, "Int", 0, "UInt*", &dpiX, "UInt*", &dpiY)
+    return {l: l, t: t, r: r, b: b, w: r - l, h: b - t, scale: dpiX / 96}
 }
 
 ; 指定矩形(スクリーン座標)をBitBltでキャプチャしCF_DIB形式のBufferを返す。失敗時は0。
@@ -2911,6 +2923,8 @@ ShowSettingsWindow(*) {
     global SettingsGui, SettingsChkImage, SettingsChkText, SettingsChkStartup, SettingsChkWatch, SettingsChkHistPersist
     global SettingsRadioPosCursor, SettingsRadioPosCenter, LauncherPositionMode
     global ClipArchiveImage, ClipArchiveText, ClipWatchOn, ClipHistoryPersist, LauncherGui
+    EnsureDpiAware()   ; 構築(Gui()・Add群)より前に明示する必要がある(ShowLauncherと同じ理由、スクリプト冒頭のコメント参照)
+    CloseLauncher()   ; ランチャーと同時に使うものではないため閉じてしまう(隣に避けて配置する計算自体を無くす、2026-07-23)
     SetTimer(CheckLauncherFocus, 0)
     if SettingsGui {
         SettingsChkImage.Value := ClipArchiveImage
@@ -2920,7 +2934,7 @@ ShowSettingsWindow(*) {
         SettingsChkHistPersist.Value := ClipHistoryPersist
         SettingsRadioPosCursor.Value := (LauncherPositionMode != "center")
         SettingsRadioPosCenter.Value := (LauncherPositionMode = "center")
-        SettingsGui.Show()
+        SettingsGui.Show("w400 h472 xCenter yCenter")
         return
     }
     SettingsGui := Gui("+ToolWindow", "設定")
@@ -2971,7 +2985,7 @@ ShowSettingsWindow(*) {
     try SettingsGui.Add("Picture", "x20 y426 w58 h36", A_ScriptDir . "\kimitolink-full-logo.png")
     SettingsGui.OnEvent("Close", (*) => HideSettingsWindow())
     SettingsGui.OnEvent("Escape", (*) => HideSettingsWindow())
-    SettingsGui.Show("w400 h472")
+    SettingsGui.Show("w400 h472 xCenter yCenter")
 }
 
 ; 設定ウィンドウを閉じ、止めていたランチャーのフォーカス監視を再開する。
