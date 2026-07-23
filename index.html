@@ -242,6 +242,16 @@ h1 .strike { text-decoration: line-through; text-decoration-color: var(--muted);
   .demo-arrow { transform: rotate(90deg); margin: -4px 0; }
 }
 
+@media (prefers-reduced-motion: no-preference) {
+  .demo-step:nth-child(1) .demo-step-icon { animation: demoStepPulse 6s ease-in-out infinite; animation-delay: 0s; --demo-glow: #7c3aed; }
+  .demo-step:nth-child(3) .demo-step-icon { animation: demoStepPulse 6s ease-in-out infinite; animation-delay: 2s; --demo-glow: var(--ok); }
+  .demo-step:nth-child(5) .demo-step-icon { animation: demoStepPulse 6s ease-in-out infinite; animation-delay: 4s; --demo-glow: var(--accent); }
+}
+@keyframes demoStepPulse {
+  0%, 16.66%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--demo-glow) 0%, transparent); transform: scale(1); }
+  8.33% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--demo-glow) 45%, transparent); transform: scale(1.08); }
+}
+
 @media (max-width: 780px) {
   .hero-grid { grid-template-columns: 1fr; }
   .hero-trio { height: 170px; order: -1; margin-bottom: 8px; }
@@ -1025,6 +1035,12 @@ p.lede { color: var(--muted); font-size: 14px; margin: 10px 0 0; max-width: 58ch
 .stat-card { background: var(--panel-soft); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px 16px; text-align: center; }
 .stat-num { font-size: 30px; font-weight: 800; color: var(--accent); line-height: 1.2; }
 .stat-num .unit { font-size: 14px; margin-left: 2px; }
+@media (prefers-reduced-motion: no-preference) {
+  .stat-num { opacity: 0; transform: scale(0.6); transition: opacity 0.5s ease, transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); }
+  .stat-num.is-in { opacity: 1; transform: scale(1); }
+  .stat-card:nth-child(2) .stat-num { transition-delay: 0.12s; }
+  .stat-card:nth-child(3) .stat-num { transition-delay: 0.24s; }
+}
 .stat-label { font-size: 12.5px; color: var(--fg); font-weight: 700; margin-top: 6px; }
 .stat-note { font-size: 10.5px; color: var(--muted); margin-top: 20px; text-align: center; }
 
@@ -1132,6 +1148,12 @@ p.lede { color: var(--muted); font-size: 14px; margin: 10px 0 0; max-width: 58ch
 @keyframes sideBtnPulse { 0%,100% { fill-opacity: .85; } 50% { fill-opacity: .45; } }
 .side-btn-pulse { animation: sideBtnPulse 1.6s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .side-btn-pulse { animation: none; } }
+
+.mouse-hit { cursor: pointer; transition: filter 0.15s ease; }
+.mouse-hit.is-active { filter: drop-shadow(0 0 0 2px rgba(0,0,0,0)) brightness(1.25); }
+path.mouse-hit.is-active, rect.mouse-hit.is-active { fill-opacity: 0.55; }
+.mouse-legend-item { cursor: pointer; transition: border-color 0.15s ease, background 0.15s ease; }
+.mouse-legend-item.is-active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--panel-soft)); }
 
 @media (max-width: 700px) {
   .mouse-map { grid-template-columns: 1fr; }
@@ -2462,11 +2484,11 @@ footer { padding: 32px 0 48px; }
         <svg viewBox="-5 0 215 320" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="マウスの図。左側面に「進む」「戻る」の2つのサイドボタンがある">
           <rect x="40" y="20" width="160" height="280" rx="80" fill="#f8fafc" stroke="#e2e8f0" stroke-width="3"/>
           <line x1="120" y1="20" x2="120" y2="120" stroke="#e2e8f0" stroke-width="3"/>
-          <path d="M40 100 a80 80 0 0 1 80 -80 v100 h-80 z" fill="#047857" fill-opacity="0.18"/>
-          <path d="M200 100 a80 80 0 0 0 -80 -80 v100 h80 z" fill="#1d4ed8" fill-opacity="0.18"/>
-          <rect x="110" y="40" width="20" height="50" rx="8" fill="#f59e0b" fill-opacity="0.35"/>
-          <rect x="26" y="140" width="18" height="34" rx="8" fill="#0891b2" fill-opacity="0.85" class="side-btn-pulse"/>
-          <rect x="22" y="184" width="24" height="42" rx="10" fill="#7c3aed" fill-opacity="0.85" class="side-btn-pulse"/>
+          <path d="M40 100 a80 80 0 0 1 80 -80 v100 h-80 z" fill="#047857" fill-opacity="0.18" class="mouse-hit" data-btn="left"/>
+          <path d="M200 100 a80 80 0 0 0 -80 -80 v100 h80 z" fill="#1d4ed8" fill-opacity="0.18" class="mouse-hit" data-btn="right"/>
+          <rect x="110" y="40" width="20" height="50" rx="8" fill="#f59e0b" fill-opacity="0.35" class="mouse-hit" data-btn="middle"/>
+          <rect x="26" y="140" width="18" height="34" rx="8" fill="#0891b2" fill-opacity="0.85" class="side-btn-pulse mouse-hit" data-btn="side-forward"/>
+          <rect x="22" y="184" width="24" height="42" rx="10" fill="#7c3aed" fill-opacity="0.85" class="side-btn-pulse mouse-hit" data-btn="side-back"/>
           <text x="55" y="70" text-anchor="middle" font-size="12" font-weight="800" fill="#047857">左</text>
           <text x="165" y="70" text-anchor="middle" font-size="12" font-weight="800" fill="#1d4ed8">右</text>
           <text x="120" y="30" text-anchor="middle" font-size="10" font-weight="800" fill="#b45309">中</text>
@@ -2476,7 +2498,7 @@ footer { padding: 32px 0 48px; }
         </svg>
       </div>
       <div class="mouse-legend">
-        <div class="mouse-legend-item side" id="side-button">
+        <div class="mouse-legend-item side" id="side-button" data-btn="side-forward">
           <div class="mouse-legend-dot">側</div>
           <div class="mouse-legend-body">
             <div class="label">サイドボタン（「進む」ボタン）— 短押しでスクショ、長押しで範囲指定スクショ</div>
@@ -2484,7 +2506,7 @@ footer { padding: 32px 0 48px; }
             <p class="side-check">💡 <strong>うちのマウスのどれ？ 3秒チェック</strong>：ブラウザでそのボタンを押して、次のページに「進んだ」らそれが対象のボタンです。左きき用や特殊な配置のマウスでも、「進む」が動くボタンならそのまま使えます。</p>
           </div>
         </div>
-        <div class="mouse-legend-item side">
+        <div class="mouse-legend-item side" data-btn="side-back">
           <div class="mouse-legend-dot">側</div>
           <div class="mouse-legend-body">
             <div class="label">サイドボタン（「戻る」ボタン）— 押すとクイックペーストランチャーが開く</div>
@@ -2492,21 +2514,21 @@ footer { padding: 32px 0 48px; }
             <p class="side-check">💡 <strong>うちのマウスのどれ？ 3秒チェック</strong>：ブラウザでそのボタンを押して、前のページに「戻った」らそれが対象のボタンです。</p>
           </div>
         </div>
-        <div class="mouse-legend-item left">
+        <div class="mouse-legend-item left" data-btn="left">
           <div class="mouse-legend-dot">左</div>
           <div class="mouse-legend-body">
             <div class="label">左クリック（ドラッグ）— なぞってコピー</div>
             <p>文章をドラッグして離すだけで自動的にコピーされます。動いてほしくない作業のときは、Ctrl + Win + C でいつでもON/OFFできます。</p>
           </div>
         </div>
-        <div class="mouse-legend-item right">
+        <div class="mouse-legend-item right" data-btn="right">
           <div class="mouse-legend-dot">右</div>
           <div class="mouse-legend-body">
             <div class="label">右クリック長押し — 送信をサジェスト</div>
             <p>0.35秒長押しで、サイトに合った送信キーが送られます。短押しは通常のメニューのまま。</p>
           </div>
         </div>
-        <div class="mouse-legend-item middle">
+        <div class="mouse-legend-item middle" data-btn="middle">
           <div class="mouse-legend-dot">中</div>
           <div class="mouse-legend-body">
             <div class="label">ミドルクリック — Git Bashを前面へ</div>
@@ -2517,6 +2539,38 @@ footer { padding: 32px 0 48px; }
     </div>
   </div>
 </section>
+
+<script>
+(function () {
+  var wrap = document.querySelector('.mouse-map');
+  if (!wrap) { return; }
+  var hits = wrap.querySelectorAll('.mouse-hit');
+  var items = wrap.querySelectorAll('.mouse-legend-item[data-btn]');
+  if (!hits.length || !items.length) { return; }
+
+  function setActive(name, on) {
+    hits.forEach(function (el) {
+      if (el.dataset.btn === name) { el.classList.toggle('is-active', on); }
+    });
+    items.forEach(function (el) {
+      if (el.dataset.btn === name) { el.classList.toggle('is-active', on); }
+    });
+  }
+
+  function bind(el) {
+    var name = el.dataset.btn;
+    if (!name) { return; }
+    el.addEventListener('mouseenter', function () { setActive(name, true); });
+    el.addEventListener('mouseleave', function () { setActive(name, false); });
+    el.addEventListener('focus', function () { setActive(name, true); });
+    el.addEventListener('blur', function () { setActive(name, false); });
+    el.addEventListener('touchstart', function () { setActive(name, true); }, { passive: true });
+    el.addEventListener('touchend', function () { setActive(name, false); }, { passive: true });
+  }
+  hits.forEach(bind);
+  items.forEach(bind);
+})();
+</script>
 
 <section id="mouse-flow">
   <div class="wrap">
@@ -2915,6 +2969,41 @@ footer { padding: 32px 0 48px; }
   </div>
 </section>
 
+<script>
+(function () {
+  var nums = document.querySelectorAll('.stat-num');
+  if (!nums.length) { return; }
+  var reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reducedMotion) { return; }
+
+  var played = false;
+  function isInReadingZone(el) {
+    var r = el.getBoundingClientRect();
+    var vh = window.innerHeight || document.documentElement.clientHeight;
+    var mid = r.top + r.height / 2;
+    return mid > vh * 0.1 && mid < vh * 0.9;
+  }
+  function reveal() {
+    if (played) { return; }
+    var grid = document.querySelector('.stat-grid');
+    if (!grid || !isInReadingZone(grid)) { return; }
+    played = true;
+    nums.forEach(function (el) { el.classList.add('is-in'); });
+    window.removeEventListener('scroll', onScroll);
+    window.removeEventListener('resize', onScroll);
+  }
+  var ticking = false;
+  function onScroll() {
+    if (ticking) { return; }
+    ticking = true;
+    setTimeout(function () { ticking = false; reveal(); }, 50);
+  }
+  window.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', onScroll, { passive: true });
+  reveal();
+})();
+</script>
+
 <section>
   <div class="wrap">
     <div class="section-head">
@@ -3254,7 +3343,7 @@ footer { padding: 32px 0 48px; }
 
 <div class="final-cta">
   <div class="wrap">
-    <h2>右手だけで、ほとんど終わる。</h2>
+    <h2>マウスだけで、ほとんど終わる。</h2>
     <p>AIとのやり取りが増えた今だからこそ、その「次のアクション」を支えるインフラを。¥980の買い切りで、今日から使えます。</p>
     <a class="button" href="#price">送信サジェストを入手する</a>
     <span class="hero-cta-note">¥980・買い切り・Windows対応・最短1分で導入</span>
