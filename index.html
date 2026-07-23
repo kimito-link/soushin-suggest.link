@@ -1035,6 +1035,12 @@ p.lede { color: var(--muted); font-size: 14px; margin: 10px 0 0; max-width: 58ch
 .stat-card { background: var(--panel-soft); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px 16px; text-align: center; }
 .stat-num { font-size: 30px; font-weight: 800; color: var(--accent); line-height: 1.2; }
 .stat-num .unit { font-size: 14px; margin-left: 2px; }
+@media (prefers-reduced-motion: no-preference) {
+  .stat-num { opacity: 0; transform: scale(0.6); transition: opacity 0.5s ease, transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); }
+  .stat-num.is-in { opacity: 1; transform: scale(1); }
+  .stat-card:nth-child(2) .stat-num { transition-delay: 0.12s; }
+  .stat-card:nth-child(3) .stat-num { transition-delay: 0.24s; }
+}
 .stat-label { font-size: 12.5px; color: var(--fg); font-weight: 700; margin-top: 6px; }
 .stat-note { font-size: 10.5px; color: var(--muted); margin-top: 20px; text-align: center; }
 
@@ -2924,6 +2930,41 @@ footer { padding: 32px 0 48px; }
     <p class="stat-note">※機能構成に基づく数値です。作業時間の削減効果には個人差があります。</p>
   </div>
 </section>
+
+<script>
+(function () {
+  var nums = document.querySelectorAll('.stat-num');
+  if (!nums.length) { return; }
+  var reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reducedMotion) { return; }
+
+  var played = false;
+  function isInReadingZone(el) {
+    var r = el.getBoundingClientRect();
+    var vh = window.innerHeight || document.documentElement.clientHeight;
+    var mid = r.top + r.height / 2;
+    return mid > vh * 0.1 && mid < vh * 0.9;
+  }
+  function reveal() {
+    if (played) { return; }
+    var grid = document.querySelector('.stat-grid');
+    if (!grid || !isInReadingZone(grid)) { return; }
+    played = true;
+    nums.forEach(function (el) { el.classList.add('is-in'); });
+    window.removeEventListener('scroll', onScroll);
+    window.removeEventListener('resize', onScroll);
+  }
+  var ticking = false;
+  function onScroll() {
+    if (ticking) { return; }
+    ticking = true;
+    setTimeout(function () { ticking = false; reveal(); }, 50);
+  }
+  window.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', onScroll, { passive: true });
+  reveal();
+})();
+</script>
 
 <section>
   <div class="wrap">
