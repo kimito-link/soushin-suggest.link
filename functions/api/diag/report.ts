@@ -60,5 +60,5 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     env.DIAG_KV.put("diag:latest", payload, { expirationTtl: TTL_SECONDS }),
   ]);
 
-  return new Response(null, { status: 204 });
+  return new Response(null, { status: 204, headers: { "Cache-Control": "no-store" } });
 };
