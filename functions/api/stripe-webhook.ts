@@ -28,7 +28,10 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   if (!env.STRIPE_SECRET_KEY || !env.STRIPE_WEBHOOK_SECRET) {
     // Not configured yet — acknowledge so Stripe doesn't retry, but do nothing.
-    return new Response(JSON.stringify({ skipped: true }), { status: 200 });
+    return new Response(JSON.stringify({ skipped: true }), {
+      status: 200,
+      headers: { "Cache-Control": "no-store" },
+    });
   }
 
   const stripe = new Stripe(env.STRIPE_SECRET_KEY, {
@@ -49,12 +52,15 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   } catch (err) {
     return new Response(
       JSON.stringify({ error: `signature verification failed: ${String(err)}` }),
-      { status: 400 }
+      { status: 400, headers: { "Cache-Control": "no-store" } }
     );
   }
 
   if (event.type !== "checkout.session.completed") {
-    return new Response(JSON.stringify({ ignored: event.type }), { status: 200 });
+    return new Response(JSON.stringify({ ignored: event.type }), {
+      status: 200,
+      headers: { "Cache-Control": "no-store" },
+    });
   }
 
   const session = event.data.object as Stripe.Checkout.Session;
@@ -64,6 +70,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     // Nothing to send to — acknowledge, don't make Stripe retry forever.
     return new Response(JSON.stringify({ error: "no customer email on session" }), {
       status: 200,
+      headers: { "Cache-Control": "no-store" },
     });
   }
 
@@ -73,10 +80,14 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     // Let Stripe retry — this is a genuine delivery failure.
     return new Response(JSON.stringify({ error: `email send failed: ${String(err)}` }), {
       status: 500,
+      headers: { "Cache-Control": "no-store" },
     });
   }
 
-  return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  return new Response(JSON.stringify({ ok: true }), {
+    status: 200,
+    headers: { "Cache-Control": "no-store" },
+  });
 };
 
 async function sendDownloadEmail(env: Env, to: string): Promise<void> {
