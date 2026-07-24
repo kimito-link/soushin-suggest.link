@@ -15,6 +15,8 @@ Fableの設計はファイルパス・行数・数値を含めて概ね正確だ
 - ✅ `functions/api/diag/latest.ts` は既に `Cache-Control: no-store` 設定済み。`functions/api/diag/report.ts` と `functions/api/stripe-webhook.ts` は未設定（Fableの「確認して無ければ追加」という指摘どおり、対応が必要）。
 - ✅ `_headers` ファイルは現状不存在。`wrangler.toml` は `pages_build_output_dir = "."` で全リポジトリが公開下（`assets/*.b64.txt` 台帳も含め実害なしとFableが判断、司令塔も同意）。
 - ✅ `assets/konta-s.b64.txt` 等、base64生成元の台帪ファイルが実在することを確認済み（外部化スクリプトの突合先として使える）。
+- 🔴 **【実装後に判明した重大な訂正】このリポジトリの実際の本番デプロイ基盤はCloudflare Pagesではなく Vercel（`vercel[bot]`によるデプロイ、URLは`*.vercel.app`）。`wrangler.toml`/`_routes.json`はリポジトリに残っているが実運用では使われていない模様。`_headers`はCloudflare Pages専用機構でVercelでは一切認識されない（`/_headers`にアクセスすると200 text/htmlでSPAフォールバックが返るだけ）。C-2の`_headers`案は**そのままでは効かない**。次回このリポジトリのデプロイ設定を扱うときは、まず実際のデプロイ先（`gh api repos/<owner>/<repo>/deployments`で確認）を疑ってから設計すること。
+- 🔴🔴 **【さらに判明】`vercel.json`に置き換えても効かなかった。** リポジトリ直下に`vercel.json`（`headers`フィールドで`/assets/*`長期キャッシュ・HTML短期キャッシュを指定）を作成しデプロイ（2026-07-24、コミット`1079635`）したが、`/assets/*`のCache-Controlは変更前の`max-age=14400`のまま変化なし。切り分けのため全パス（`/(.*)`）に目印ヘッダー`x-lp-speed-test`を追加してデプロイ・検証（コミット`ef4d8ab`）したところ、**そのヘッダーすら一切付与されなかった**。つまり`vercel.json`自体がこのプロジェクトのデプロイパイプラインで一切読まれていない（`vercel.json`にアクセスすると200 application/jsonでファイルの中身がそのまま返る＝設定ファイルとしてでなく単なる静的公開ファイルとして配信されている）。原因はVercel側のプロジェクト設定（Root Directory / Framework Preset / あるいはこのデプロイ自体がGitHub Actions等の別経路でVercel CLIを介さず生成されている可能性）にあると推測されるが、コード変更だけでは確認・修正できない。**この先キャッシュヘッダーを本気で変えたいなら、Vercelダッシュボードのプロジェクト設定を人間が直接確認する必要がある**（司令塔からは非公開のダッシュボードUIを見られないため）。目印ヘッダーは検証後削除済み・`vercel.json`のheaders設定自体は「効いていないが将来Vercel側設定が直れば効く」ものとしてそのままリポジトリに残置。
 
 ---
 
@@ -89,9 +91,11 @@ scripts/externalize-inline-images.mjs
 
 **必須の同時処置（CLS防止）**: 外部化した全`<img>`に原寸`width`/`height`属性を付与する（表示サイズはCSSが握っているのでレイアウトは不変、遅延到着時の枠確保のみが目的）。
 
-### C-2. `_headers`ファイル
+### C-2. キャッシュヘッダ設定 【訂正: 実際はvercel.jsonで実装】
 
-リポジトリ直下に新規作成:
+> 以下は設計時点（Cloudflare Pages前提）の記述。実装時に本番デプロイ基盤がVercelと判明したため、実際には`vercel.json`の`headers`フィールドで同等の設定を行った。設計意図（画像は長期immutable・HTMLは短期must-revalidate）は変わらない。
+
+リポジトリ直下に新規作成（Cloudflare Pages前提だった当初案）:
 
 ```
 # _headers — Cloudflare Pages カスタムヘッダ

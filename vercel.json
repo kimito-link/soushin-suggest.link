@@ -1,15 +1,6 @@
 {
   "headers": [
     {
-      "source": "/(.*)",
-      "headers": [
-        {
-          "key": "x-lp-speed-test",
-          "value": "vercel-json-is-read"
-        }
-      ]
-    },
-    {
       "source": "/assets/(.*)",
       "headers": [
         {
